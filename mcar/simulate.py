@@ -103,7 +103,7 @@ def simulate_MCAR_approx(P: np.ndarray, A: np.ndarray, x0: np.ndarray, a: np.nda
     with triplet (b, Sigma, F) using Euler-Maruyama method:
     :param P: partition over which to simulate the MCAR process [0 = t_0, t_1, ..., t_N = T], (N+1,) np.ndarray
     :param A: MCAR state-transition matrix, (pd, pd) np.ndarray
-    :param x0: state space initial condition, (pd,) np.ndarray
+    :param x0: state space initial condition, (pd, ) np.ndarray
     :param a: drift of Levy process with truncation function t(z) = 0, i.e. E[L_1] = a + \int_{R^d} x F(dx), (d,) np.ndarray
     :param Sigma: covariance of Brownian component of Levy process, (d, d) np.ndarray
     :param jumps: function for generating n jump increments over a time interval delta_t, function(delta_t, n) instead of distribution of jumps
@@ -182,7 +182,7 @@ def simulate_MCAR_compound_poisson(P: np.ndarray, A: np.ndarray, x0: np.ndarray,
     recall need to multiply E b, E Sigma E^T, and E jumps
     :param P: partition over which to simulate the MCAR process [0 = t_0, t_1, ..., t_N = T], (N+1,) np.ndarray
     :param A: MCAR state-transition matrix, (pd, pd) np.ndarray
-    :param x0: state space initial condition, (pd,) np.ndarray
+    :param x0: state space initial condition, (pd, ) np.ndarray
     :param a: drift of Levy process with truncation function t(z) = 0, i.e. E[L_1] = a + \int_{R^d} x F(dx), (d,) np.ndarray
     :param Sigma: covariance of Brownian component of Levy process, (d, d) np.ndarray
     :param rate: jump rate of Levy process, float
