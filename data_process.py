@@ -22,7 +22,7 @@ def multiprocess_orderbooks(TICKER, input_path, output_path, log_path, check_for
                        "ASKp1", "ASKs1", "BIDp1",  "BIDs1", ..., "ASKplevels", "ASKslevels", "BIDplevels",  "BIDslevels", str
     :param output_path: the path where we wish to save the processed datasets (as .npz files), str
     :param log_path: the path where processing logs are saved, str
-    :param check_for_processed_data: if True check if processed .npz files already exist in output_path and skip these dates for processing, bool
+    :param check_for_processed_data: check if processed .npz files already exist in output_path and skip these dates for processing, bool
     :return: saves the aggregated VWAP in output_path, as .npz files with numpy attributes
              "orderbook_features" (:, 1).
     """
@@ -84,7 +84,7 @@ def process_orderbook(orderbook_name, TICKER, output_path):
     - order book states with crossed quotes are removed.
     - each state in the orderbook is time-stamped, with states occurring at the same time collapsed
       onto the last state.
-    - the first and last 10 minutes of market activity (inside usual opening times) are dropped.
+    - the first and last 60 minutes of market activity (inside usual opening times) are dropped.
     :param orderbook_name: order book to process, of shape (T, 4):
             "ASKp1", "ASKs1", "BIDp1",  "BIDs1" str
     :param TICKER: the TICKER to be considered, str
@@ -188,16 +188,10 @@ def process_orderbook(orderbook_name, TICKER, output_path):
 
 def aggregate_assets(assets, base_dir, out_dir):
     """
-    Aggregate VWAP data for multiple assets into a single file per date.
-
-    Parameters
-    ----------
-    assets : list of str
-        Asset names (e.g., ["asset1", "asset2", "asset3", "asset4"]).
-    base_dir : str
-        Base directory containing asset folders.
-    out_dir : str
-        Output directory for aggregated files.
+    Aggregate VWAP data for multiple assets into a single file.
+    :param assets : list of Asset names (e.g., ["asset1", "asset2", "asset3", "asset4"]).
+    :param base_dir : Base directory containing asset folders.
+    :param out_dir : Output directory for aggregated files.
     """
     os.makedirs(out_dir, exist_ok=True)
 
@@ -269,9 +263,9 @@ def plot_realizedCov(cov_data, rules, out_dir='./data/LOBSTERdata/output/aggrega
 def adjacency_matrices(A, n):
     """
     Compute all adjacency matrices up to distance n.
-    A: binary adjacency matrix (NxN)
-    n: maximum distance
-    Returns: list of binary matrices [A1, A2, ..., An]
+    :param A: binary adjacency matrix (NxN)
+    :param n: maximum distance
+    :return: list of binary matrices [A1, A2, ..., An]
     """
     reach = (A > 0).astype(int)       # distance <= 1
     results = [reach.copy()]          # list of distance-exact adjacency
@@ -283,7 +277,7 @@ def adjacency_matrices(A, n):
         # remove already reachable
         Ak = Ak * (1 - cumulative)
 
-        # zero diagonal
+        # zero diagonal for no loops
         np.fill_diagonal(Ak, 0)
 
         results.append(Ak.copy())
@@ -294,6 +288,11 @@ def adjacency_matrices(A, n):
 
 
 def edge_weight(adjs):
+    """
+    Compute edge weight for each edge in the network (for only one covariate now).
+    :param adjs: list of binary matrices [A1, A2, ..., An]
+    :return: list of numpy matrix [W]
+    """
     N = adjs[0].shape[0]
     result = np.zeros((N, N))
     for adj in adjs:
@@ -304,17 +303,30 @@ def edge_weight(adjs):
     return [result]
 
 
-def line_graph(cov_data, TICKERS, rule, corr_thres=0.25, ratio_thres=0.1):
+def line_graph(cov_data, TICKERS, rule, corr_thres = 0.25, ratio_thres = 0.1):
+    """
+    Construct the line graph adjacency matrix given covariance/variance data
+    :param cov_data: covariance/variance data
+    :param TICKERS: list of tickers
+    :param rule: aggregation rule for realized covariations, str
+    :param corr_thres: predefined correlation threshold, float
+    :param ratio_thres: predefined ratio threshold, float
+    :return: [line graph adjacency matrix, asset pair for each edge]
+    """
     pairs = list(combinations(TICKERS, 2))
     df_cov = cov_data.resample(rule).sum()
     df_cov = df_cov.loc[df_cov.index.intersection(cov_data.index)]
     corr_list = []
+
+    # Compute the correlation between assets as the value of edges
     for t, row in df_cov.iterrows():
         r = row.values
         corr_vals = {pair[0] + '_' + pair[1]: r[df_cov.columns.get_loc(pair[0] + '_' + pair[1])] / (
                     (r[df_cov.columns.get_loc(pair[0])] * r[df_cov.columns.get_loc(pair[1])]) ** .5) for pair in pairs}
         corr_list.append(pd.Series(corr_vals, name=t))
     corr_df = pd.DataFrame(corr_list)
+
+    # Compute the ratio of the number of realized correlations exceed the correlation threshold
     s = (abs(corr_df) > corr_thres).sum(axis=0) / corr_df.shape[0]
     edges = []
     for pair, value in s.items():
@@ -326,7 +338,7 @@ def line_graph(cov_data, TICKERS, rule, corr_thres=0.25, ratio_thres=0.1):
     # Initialize adjacency matrix
     adjacency = pd.DataFrame(0, index=TICKERS, columns=TICKERS)
 
-    # Fill in where value > ratio_thres
+    # Fill in adjacency matrix where ratio > ratio_thres
     for _, row in df_edges.iterrows():
         if abs(row['weight']) > ratio_thres:
             adjacency.loc[row['from'], row['to']] = 1
