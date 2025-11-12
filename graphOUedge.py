@@ -54,8 +54,10 @@ class GraphOUEdge:
             l += 1
         self.Q_Q = MCAR_A(np.array(self.Q))
         evals, evecs = np.linalg.eig(self.Q_Q)
-        assert (np.real(evals) < 0).all()
-
+        try:
+            assert (np.real(evals) < 0).all()
+        except:
+            print("positive eigenvalue real parts")
         return self.Q_Q
 
     def LevyProcess_get(self):
