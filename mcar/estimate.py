@@ -313,19 +313,6 @@ def estimate_OU_drift(Y: np.ndarray, R_L: np.ndarray, E: int, C: int, P: np.ndar
     # compute and return theta_hat
     vec_theta_hat = np.matmul(np.linalg.pinv(KK), K)
 
-    # for l = 1 or 2
-    if p < 3:
-        vec_theta_hat = minimize(lambda x: -np.matmul(x, K) + 0.5 * np.matmul(x, np.matmul(KK, x)), vec_theta_hat,
-             constraints=({'type': 'ineq', 'fun': lambda x: x}), method='SLSQP').x
-
-
-    # for l >= 3
-    else:
-        vec_theta_hat = minimize(lambda x: -np.matmul(x, K) + 0.5 * np.matmul(x, np.matmul(KK, x)), vec_theta_hat,
-                                 constraints=({'type': 'ineq', 'fun': lambda x: hurwitz_principal_minors(x)},
-                                              {'type': 'ineq', 'fun': lambda x: x}), method='SLSQP').x
-
-    vec_theta_hat = np.clip(vec_theta_hat, 1e-16, None)
     if with_cov and Sigma is not None:
         return vec_theta_hat, KK, K
     elif with_cov and Sigma is None:
