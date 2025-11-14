@@ -233,7 +233,7 @@ def simulate_MCAR_compound_poisson(P: np.ndarray, A: np.ndarray, x0: np.ndarray,
 
         # increment due to W
         V = scipy.linalg.fractional_matrix_power(eM, delta_t).real[:pd, pd:].dot(eAt.T)
-        W_increments = scipy.stats.multivariate_normal(cov=V, allow_singular=True).rvs(size=N-1).T
+        W_increments = np.atleast_2d(scipy.stats.multivariate_normal(cov=V, allow_singular=True).rvs(size=N-1)).T
 
         if pd == 1:
             W_increments = W_increments.reshape(1, -1)
@@ -247,7 +247,7 @@ def simulate_MCAR_compound_poisson(P: np.ndarray, A: np.ndarray, x0: np.ndarray,
             jump_indices = (jump_times // delta_t).astype(int)
             for i, jump_index in enumerate(jump_indices):
                 J_increments[:, jump_index] += scipy.linalg.fractional_matrix_power(eA, (jump_index+1)*delta_t - jump_times[i]).real.dot(E).dot(jump_sizes[:, i])
-        
+
         # evolve the process
         for n in range(N-1):
             X[:, n+1] = eAt.dot(X[:, n]) + a_increment + W_increments[:, n] + J_increments[:, n]
