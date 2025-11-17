@@ -7,6 +7,7 @@ import re
 from multiprocessing import Pool
 from itertools import combinations
 from datetime import datetime
+from concurrent.futures import ProcessPoolExecutor
 
 def multiprocess_orderbooks(TICKER, input_path, output_path, log_path, check_for_processed_data=True):
     """
@@ -186,57 +187,51 @@ def process_orderbook(orderbook_name, TICKER, output_path):
     return log + orderbook_name + ' completed.'
 
 
-def aggregate_assets(assets, base_dir, out_dir):
+def process_day_parallel(arg):
     """
-    Aggregate VWAP data for multiple assets into a single file.
-    :param assets : list of Asset names (e.g., ["asset1", "asset2", "asset3", "asset4"]).
-    :param base_dir : Base directory containing asset folders.
-    :param out_dir : Output directory for aggregated files.
+    Load all assets for a single day in parallel.
+    Returns a DataFrame with timestamps as index and assets as columns.
+    """
+    date, assets, base_dir = arg
+    results = []
+    for asset in assets:
+        file_path = base_dir + asset + '/' + asset + '_data_' + date + '.npz'
+        data = np.load(file_path)
+        ts = pd.to_datetime(data["timestamps"])
+        vwap = data["VWAP"]
+        results.append(pd.DataFrame({asset: np.log(vwap)}, index=ts))
+
+    # Align timestamps across assets
+    day_df = pd.concat(results, axis=1, join='inner').sort_index()
+    return day_df
+
+
+def aggregate_assets(assets, base_dir, out_dir, max_workers_days=None):
+    """
+    Aggregate log VWAP for multiple assets and days using full parallelization.
+    - max_workers_days: number of parallel processes for days
+    - max_workers_assets: number of parallel processes for assets within a day
     """
     os.makedirs(out_dir, exist_ok=True)
 
     csv_file_list = glob.glob(base_dir + assets[0] + '/' + "*.{}".format("npz"))
     dates = [re.findall(r"\d{4}-\d{2}-\d{2}", a)[-1] for a in csv_file_list]
-    day_data = []
-    for date in dates:
-        dfs = []
-        for asset in assets:
-            file_path = base_dir + asset + '/' + asset + '_data_' + date + '.npz'
-            data = np.load(file_path)
 
-            # assume .npz contains 'timestamp' and 'vwap' arrays
-            ts = pd.to_datetime(data["timestamps"])
-            vwap = data["VWAP"]
+    day_inputs = [(date, assets, base_dir) for date in dates]
 
-            df = pd.DataFrame({f"{asset}": vwap}, index=ts)
-            dfs.append(df)
+    # Process each day in parallel
+    with ProcessPoolExecutor(max_workers=max_workers_days) as executor:
+        results = list(executor.map(process_day_parallel, day_inputs))
 
-        # align on timestamp
-        agg_df = pd.concat(dfs, axis=1).sort_index()
+    # Concatenate all days
+    log_price_data = pd.concat(results)
 
-        # compute log return and covariance matrices for multiple intervals
-        returns = np.log(agg_df).diff().dropna()
+    # Ensure consistent asset order
+    log_price_data = log_price_data[assets]
 
-        assets = returns.columns
-        pairs = list(combinations(assets, 2))
-
-        outer_list = []
-
-        for t, row in returns.iterrows():
-            r = row.values
-            cov_vals = {pair[0] + '_' + pair[1]: r[assets.get_loc(pair[0])] * r[assets.get_loc(pair[1])] for pair in pairs}
-            var_vals = {asset: r[assets.get_loc(asset)] * r[assets.get_loc(asset)] for asset in assets}
-            cov_vals.update(var_vals)
-            outer_list.append(pd.Series(cov_vals, name=t))
-
-        outer_df = pd.DataFrame(outer_list)
-        day_data.append(outer_df)
-
-    # save aggregated dataset
-    cov_data = pd.concat(day_data)
-    cov_path = out_dir + 'cov.npz'
-    np.savez(cov_path, timestamp=cov_data.index.astype('datetime64[s]'), **{col: cov_data[col].values for col in cov_data.columns})
-
+    # Save aggregated dataset
+    log_price_path = out_dir + 'log_price.npz'
+    np.savez(log_price_path, timestamps=log_price_data.index.astype('datetime64[s]'), **{col: log_price_data[col].values for col in log_price_data.columns})
 
 def plot_realizedCov(cov_data, rules, out_dir='./data/LOBSTERdata/output/aggregate/'):
     fig, axes = plt.subplots(cov_data.shape[1], 1, figsize=(12, 3 * cov_data.shape[1]), sharex=True)
