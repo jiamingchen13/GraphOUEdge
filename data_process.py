@@ -9,6 +9,11 @@ from multiprocessing import Pool
 from itertools import combinations
 from datetime import datetime
 from concurrent.futures import ProcessPoolExecutor
+from statsmodels.tsa.ar_model import AutoReg
+from statsmodels.tsa.api import VAR
+from graphOUedge import GraphOUEdge
+from mcar.estimate import *
+from mcar.simulate import *
 
 def multiprocess_orderbooks(TICKER, input_path, output_path, log_path, check_for_processed_data=True):
     """
@@ -420,3 +425,92 @@ def log_data_to_cov_data(path: str, rule: str):
              **{col: cov_data[col].values for col in cov_data.columns})
 
     return cov_data
+
+
+def UAR_model(Y, K, test_size, forecast_step):
+    # Univariate AR Edge Model
+
+    df_AR = np.array(Y.copy())
+    aic_values = []
+    best_p = np.zeros((K,))
+    for i in range(K):
+        for p in range(1, 6):
+            model = AutoReg(df_AR[i, :], lags=p).fit()
+            aic_values.append((p, model.aic))
+        best_p[i] = min(aic_values, key=lambda x: x[1])[0]
+
+    forecast_AR = np.zeros((test_size, K, forecast_step))
+    for i in range(test_size):
+        for j in range(K):
+            window_data = df_AR[j, i:]
+            model = AutoReg(window_data, lags=best_p[j]).fit()
+            forecast_AR[i, j, :] = model.predict(start=len(window_data), end=len(window_data) + forecast_step - 1)
+        df_AR = np.append(df_AR, forecast_AR[i, :, 0:1], axis=1)
+
+    with open(os.path.join('data\\LOBSTERdata\\output\\train\\aggregate', 'forecast_AR.npy'), 'wb') as f:
+        np.save(f, forecast_AR)
+
+
+def VAR_model(Y, K, test_size, forecast_step):
+    # VAR Edge Model
+
+    df_VAR = np.array(Y.T.copy())
+    model = VAR(df_VAR)
+    # automatic lag selection by AIC
+    best_lag_var = model.select_order(maxlags=5).aic
+
+    forecast_VAR = np.zeros((test_size, K, forecast_step))
+    for i in range(test_size):
+        window_data = df_VAR[i:, :]
+        model = VAR(window_data).fit(best_lag_var)
+        forecast_VAR[i, :, :] = model.forecast(window_data[-model.k_ar:, :], steps=forecast_step).T
+        df_VAR = np.append(df_VAR, forecast_VAR[i, :, 0:1].T, axis=0)
+
+    with open(os.path.join('data\\LOBSTERdata\\output\\train\\aggregate', 'forecast_VAR.npy'), 'wb') as f:
+        np.save(f, forecast_VAR)
+
+def OU_model(Y, K, test_size, forecast_step, R_L, C, jump_activity, P_, Q_):
+    # OU Edge model
+
+    forecast_OU = np.zeros((test_size, K, forecast_step))
+    df_OU = np.array(Y.copy())
+    Adj_L_OU = [np.zeros((K, K)) for _ in range(max(R_L))]
+    W_C_OU = edge_weight(Adj_L_OU)
+    X_OU = GraphOUEdge(R_L, K, C, Adj_L_OU, W_C_OU, 'data\\LOBSTERdata\\output\\train\\aggregate', 'plots')
+    X_OU.estimate_unknown_Levy(Y, f'{jump_activity}')
+    b_OU = np.load(f'./data/LOBSTERdata/output/train/aggregate/MCAR_estimates_b_{jump_activity}.npy')
+    Sigma_OU = np.load(f'./data/LOBSTERdata/output/train/aggregate/MCAR_estimates_Sigma_{jump_activity}.npy')
+    F_mean_OU = np.load(f'./data/LOBSTERdata/output/train/aggregate/MCAR_estimates_F_mean_{jump_activity}.npy')
+    F_squared_OU = np.load(f'./data/LOBSTERdata/output/train/aggregate/MCAR_estimates_F_squared_{jump_activity}.npy')
+
+    jump_F_OU = scipy.stats.multivariate_normal(mean=F_mean_OU, cov=(F_squared_OU - np.outer(F_mean_OU, F_mean_OU)), allow_singular=True)
+    alphas_OU = []
+
+    for i in range(test_size):
+        window_data = df_OU[:, i:]
+        theta_hat_OU, HH, H = estimate_OU_drift(window_data, R_L, K, C, P_, Q_, b_OU, None, Sigma_OU, with_cov=True)
+        X_OU.alpha_set(theta_hat_OU)
+        X_OU.beta_set([[0] * stage * C for stage in R_L])
+        try:
+            Q_Q = X_OU.Q_matrix()
+        except:
+            # for l = 1 or 2
+            if len(R_L) < 3:
+                theta_hat_OU = minimize(lambda x: -np.matmul(x, H) + 0.5 * np.matmul(x, np.matmul(HH, x)), theta_hat_OU,
+                                        constraints=({'type': 'ineq', 'fun': lambda x: x}), method='SLSQP').x
+            # for l >= 3
+            else:
+                theta_hat_OU = minimize(lambda x: -np.matmul(x, H) + 0.5 * np.matmul(x, np.matmul(HH, x)), theta_hat_OU,
+                                        constraints=({'type': 'ineq', 'fun': lambda x: hurwitz_principal_minors(x)}, {'type': 'ineq', 'fun': lambda x: x}), method='SLSQP').x
+            theta_hat_OU = np.clip(theta_hat_OU, 1e-16, None)
+            X_OU.alpha_set(theta_hat_OU)
+            X_OU.beta_set([[0] * stage * C for stage in R_L])
+            Q_Q = X_OU.Q_matrix()
+
+        alphas_OU.append(theta_hat_OU)
+        forecast_OU[i, :, :] = np.mean(np.array([simulate_MCAR_compound_poisson([i for i in range(forecast_step + 1)],
+                                                                                Q_Q, np.append(window_data[:, -1], [0] * K * (len(R_L) - 1)), b_OU, Sigma_OU, 1, jump_F_OU, uniform=True)[:, 1:] for _ in range(1000)]), axis=0)
+        df_OU = np.append(df_OU, forecast_OU[i, :, 0:1], axis=1)
+
+    with open(os.path.join('data\\LOBSTERdata\\output\\train\\aggregate', 'forecast_OU.npy'), 'wb') as f:
+        np.save(f, forecast_OU)
