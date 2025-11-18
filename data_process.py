@@ -1,9 +1,10 @@
 import os
 import glob
+import math
+import re
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-import re
 from multiprocessing import Pool
 from itertools import combinations
 from datetime import datetime
@@ -24,7 +25,7 @@ def multiprocess_orderbooks(TICKER, input_path, output_path, log_path, check_for
     :param output_path: the path where we wish to save the processed datasets (as .npz files), str
     :param log_path: the path where processing logs are saved, str
     :param check_for_processed_data: check if processed .npz files already exist in output_path and skip these dates for processing, bool
-    :return: saves the aggregated VWAP in output_path, as .npz files with numpy attributes
+    :return: saves the aggregated mid quote price in output_path, as .npz files with numpy attributes
              "orderbook_features" (:, 1).
     """
     csv_file_list = glob.glob(os.path.join(input_path, "*.{}".format("csv")))
@@ -90,7 +91,7 @@ def process_orderbook(orderbook_name, TICKER, output_path):
             "ASKp1", "ASKs1", "BIDp1",  "BIDs1" str
     :param TICKER: the TICKER to be considered, str
     :param output_path: the path where we wish to save the processed datasets (as .npz files), str
-    :return: saves the aggregated VWAP in output_path, as .npz files with numpy attributes
+    :return: saves the aggregated mid quote price in output_path, as .npz files with numpy attributes
              "orderbook_features" (:, 1).
     """
     print(orderbook_name)
@@ -102,10 +103,9 @@ def process_orderbook(orderbook_name, TICKER, output_path):
     except:
         return orderbook_name + ' skipped. Error: failed to read orderbook.'
 
-    # compute the VWAP
+    # compute the mid quote price
     df_orderbook.columns = ["ASKp1", "ASKs1", "BIDp1", "BIDs1"]
-    df_orderbook.insert(0, "VWAP", (df_orderbook["ASKp1"] * df_orderbook["BIDs1"] + df_orderbook["BIDp1"] *
-                                    df_orderbook["ASKs1"]) / (df_orderbook["BIDs1"] + df_orderbook["ASKs1"]))
+    df_orderbook.insert(0, "mid", (df_orderbook["ASKp1"] + df_orderbook["BIDp1"]) / 2)
 
     # get date
     match = re.findall(r"\d{4}-\d{2}-\d{2}", orderbook_name)[-1]
@@ -175,14 +175,14 @@ def process_orderbook(orderbook_name, TICKER, output_path):
     df_orderbook = df_orderbook.loc[(df_orderbook["seconds"] >= market_open_seconds) &
                                     (df_orderbook["seconds"] <= market_close_seconds)]
 
-    # 6. downsample tick-by-tick VWAP data into 1-second frequency, keeping only the last tick in each second with forward-fill
+    # 6. downsample tick-by-tick mid quote price data into 1-second frequency, keeping only the last tick in each second with forward-fill
     df_orderbook['timestamp'] = pd.to_datetime(df_orderbook['seconds'], unit='s', origin=pd.Timestamp(date))
     df_orderbook = df_orderbook.set_index('timestamp')
     df_orderbook_sec = df_orderbook.resample('1s').last().ffill()
 
     # save
     output_name = os.path.join(output_path, TICKER + "_" + "data" + "_" + str(date.date()) + ".npz")
-    np.savez(output_name, timestamps=df_orderbook_sec.index.astype('datetime64[s]'), VWAP=df_orderbook_sec['VWAP'].values)
+    np.savez(output_name, timestamps=df_orderbook_sec.index.astype('datetime64[s]'), mid=df_orderbook_sec['mid'].values)
 
     return log + orderbook_name + ' completed.'
 
@@ -198,8 +198,8 @@ def process_day_parallel(arg):
         file_path = base_dir + asset + '/' + asset + '_data_' + date + '.npz'
         data = np.load(file_path)
         ts = pd.to_datetime(data["timestamps"])
-        vwap = data["VWAP"]
-        results.append(pd.DataFrame({asset: np.log(vwap)}, index=ts))
+        mid = data["mid"]
+        results.append(pd.DataFrame({asset: np.log(mid)}, index=ts))
 
     # Align timestamps across assets
     day_df = pd.concat(results, axis=1, join='inner').sort_index()
@@ -208,7 +208,7 @@ def process_day_parallel(arg):
 
 def aggregate_assets(assets, base_dir, out_dir, max_workers_days=None):
     """
-    Aggregate log VWAP for multiple assets and days using full parallelization.
+    Aggregate log mid quote price for multiple assets and days using full parallelization.
     - max_workers_days: number of parallel processes for days
     - max_workers_assets: number of parallel processes for assets within a day
     """
@@ -232,6 +232,53 @@ def aggregate_assets(assets, base_dir, out_dir, max_workers_days=None):
     # Save aggregated dataset
     log_price_path = out_dir + 'log_price.npz'
     np.savez(log_price_path, timestamps=log_price_data.index.astype('datetime64[s]'), **{col: log_price_data[col].values for col in log_price_data.columns})
+
+
+def MRC(Y):
+    """
+    Compute the Modulated Realized Covariance (MRC) estimator.
+
+    Parameters
+    ----------
+    Y : np.ndarray
+        Log-price series, shape (n, d).
+
+    Returns
+    -------
+    C : np.ndarray
+        Estimated covariance matrix, shape (d, d).
+    """
+    assets = Y.columns
+    Y = np.asarray(Y)
+    n, d = Y.shape
+    if n == 0:
+        return
+
+    N = math.ceil((n - 1) ** .6 * 1)
+    k_n = N if N % 2 == 0 else N + 1
+    half = k_n // 2
+    m = n - k_n + 1  # number of valid indices i
+
+    # Compute bar{Y_i} for all i in a vectorized way
+    barY = np.zeros((m, d))
+
+    for i in range(m):
+        # forward block
+        forward = Y[i + half: i + k_n].sum(axis=0)
+        # backward block
+        backward = Y[i: i + half].sum(axis=0)
+        barY[i] = (forward - backward) / k_n
+
+    # Sum of outer products barY_i barY_i^T and multiply the scaling factor
+    S = sum(np.outer(barY[i], barY[i]) for i in range(m)) * ((n - 1) / (n - k_n + 1)) * (12 / k_n)
+
+    # Flatten covariance matrix
+    iu = np.triu_indices(d)
+    labels = [f"{assets[i]}_{assets[j]}" for i, j in zip(iu[0], iu[1])]
+    data = S[iu]
+
+    return pd.Series(data, index=labels)
+
 
 def plot_realizedCov(cov_data, rules, out_dir='./data/LOBSTERdata/output/aggregate/'):
     fig, axes = plt.subplots(cov_data.shape[1], 1, figsize=(12, 3 * cov_data.shape[1]), sharex=True)
@@ -259,6 +306,7 @@ def adjacency_matrices(A, n):
     """
     Compute all adjacency matrices up to distance n.
     :param A: binary adjacency matrix (NxN)
+
     :param n: maximum distance
     :return: list of binary matrices [A1, A2, ..., An]
     """
@@ -298,26 +346,23 @@ def edge_weight(adjs):
     return [result]
 
 
-def line_graph(cov_data, TICKERS, rule, corr_thres = 0.25, ratio_thres = 0.1):
+def line_graph(cov_data, TICKERS, corr_thres = 0.25, ratio_thres = 0.1):
     """
     Construct the line graph adjacency matrix given covariance/variance data
     :param cov_data: covariance/variance data
     :param TICKERS: list of tickers
-    :param rule: aggregation rule for realized covariations, str
     :param corr_thres: predefined correlation threshold, float
     :param ratio_thres: predefined ratio threshold, float
     :return: [line graph adjacency matrix, asset pair for each edge]
     """
     pairs = list(combinations(TICKERS, 2))
-    df_cov = cov_data.resample(rule).sum()
-    df_cov = df_cov.loc[df_cov.index.intersection(cov_data.index)]
     corr_list = []
 
     # Compute the correlation between assets as the value of edges
-    for t, row in df_cov.iterrows():
+    for t, row in cov_data.iterrows():
         r = row.values
-        corr_vals = {pair[0] + '_' + pair[1]: r[df_cov.columns.get_loc(pair[0] + '_' + pair[1])] / (
-                    (r[df_cov.columns.get_loc(pair[0])] * r[df_cov.columns.get_loc(pair[1])]) ** .5) for pair in pairs}
+        corr_vals = {pair[0] + '_' + pair[1]: r[cov_data.columns.get_loc(pair[0] + '_' + pair[1])] / (
+                    (r[cov_data.columns.get_loc(pair[0] + '_' + pair[0])] * r[cov_data.columns.get_loc(pair[1] + '_' + pair[1])]) ** .5) for pair in pairs}
         corr_list.append(pd.Series(corr_vals, name=t))
     corr_df = pd.DataFrame(corr_list)
 
@@ -351,3 +396,27 @@ def line_graph(cov_data, TICKERS, rule, corr_thres = 0.25, ratio_thres = 0.1):
     B = M.T @ M
     np.fill_diagonal(B, 0)
     return [B, edges_]
+
+
+def log_data_to_cov_data(path: str, rule: str):
+    # Load empirical data
+    data = np.load(path + 'log_price.npz')
+    index = pd.to_datetime(data["timestamps"])
+    columns = [key for key in data.files if key != "timestamps"]
+    log_price_data = pd.DataFrame({col: data[col] for col in columns}, index=index)
+    data.close()
+
+    # Compute modulated realised covariance
+    out = {}
+
+    for timestamp, group in log_price_data.resample(rule):
+        res = MRC(group)
+        if res is None:
+            continue
+        out[timestamp] = res
+
+    cov_data = pd.DataFrame.from_dict(out, orient='index')
+    np.savez(path + 'cov.npz', timestamps=cov_data.index.astype('datetime64[s]'),
+             **{col: cov_data[col].values for col in cov_data.columns})
+
+    return cov_data
