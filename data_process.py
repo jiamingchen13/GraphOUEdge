@@ -363,7 +363,7 @@ def line_graph(cov_data, TICKERS, corr_thres = 0.25, ratio_thres = 0.1):
     pairs = list(combinations(TICKERS, 2))
     corr_list = []
 
-    # Compute the correlation between assets as the value of edges
+    # Record the correlation between assets as the value of edges
     for t, row in cov_data.iterrows():
         r = row.values
         corr_vals = {pair[0] + '_' + pair[1]: r[cov_data.columns.get_loc(pair[0] + '_' + pair[1])] / (
