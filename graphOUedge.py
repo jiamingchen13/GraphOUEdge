@@ -53,7 +53,7 @@ class GraphOUEdge:
                 np.tensordot(np.array(self.beta[l]).T, np.identity(self.K), axes=0), axis=0)))
             l += 1
         self.Q_Q = MCAR_A(np.array(self.Q))
-        
+
         if strict:
             evals, evecs = np.linalg.eig(self.Q_Q)
             assert (np.real(evals) < 0).all()
