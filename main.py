@@ -51,9 +51,7 @@ test_set = sliding_window_view(test_Y, (K, forecast_step))[0]
 test_size = test_set.shape[0]
 
 if __name__ == "__main__":
-    UAR_model(Y, K, test_size, forecast_step)
-    VAR_model(Y, K, test_size, forecast_step)
-    OU_model(Y, K, test_size, forecast_step, R_L, C, jump_activity, P_, Q_)
+    pass
 
 
 

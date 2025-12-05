@@ -74,7 +74,7 @@ def estimate_MCAR_drift(Y: np.ndarray, p: int, P: np.ndarray, Q: np.ndarray, b: 
         return AA_hat
 
 # Estimate grCAR parameter theta from state space observation
-def estimate_grCAR_drift(Y: np.ndarray, A: np.ndarray, W_C: np.ndarray, p: int, R_L: np.ndarray, C: int, P: np.ndarray, Q: np.ndarray, b: np.ndarray, nu: np.ndarray = None, Sigma: np.ndarray = None, with_cov: bool = False):
+def estimate_grCAR_drift(Y: np.ndarray, A, W_C, p: int, R_L: np.ndarray, C: int, P: np.ndarray, Q: np.ndarray, b: np.ndarray, nu: np.ndarray = None, Sigma: np.ndarray = None, with_cov: bool = False):
     """
     Estimate grCAR drift parameters from the realisation of a grCAR process with driving Levy triplet (b, Sigma, F).
     Here the Levy drift parameter b corresponds to
@@ -721,7 +721,7 @@ def estimator_to_QQ(V: np.ndarray, R_L: np.ndarray, C: int, W_C: np.ndarray, Adj
         l += 1
     return np.array(Q)
 
-def estimator_to_QQ_cp(V, R_L: np.ndarray, C: int, W_C: np.ndarray, Adj: np.ndarray, K: int):
+def estimator_to_QQ_cp(V, R_L: np.ndarray, C: int, W_C, Adj, K: int):
     alphas = []
     betas = []
     idx = 0

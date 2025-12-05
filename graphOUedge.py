@@ -6,7 +6,7 @@ from mcar.simulate import *
 from mcar.estimate import *
 
 class GraphOUEdge:
-    def __init__(self, R_L: np.ndarray, K: int, C: int, Adj: np.ndarray, W_C: np.ndarray, data_dir: str, plots_dir: str):
+    def __init__(self, R_L: np.ndarray, K: int, C: int, Adj, W_C, data_dir: str, plots_dir: str):
         self.L = len(R_L)  # Lags
         self.R_L = R_L  # Maximum stage for each Lag
         self.K = K  # Edges

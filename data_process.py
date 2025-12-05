@@ -351,6 +351,23 @@ def edge_weight(adjs):
     return [result]
 
 
+
+def adj_to_line_graph(adj, TICKERS):
+    adjacency = pd.DataFrame(adj, index=TICKERS, columns=TICKERS)
+    n = adjacency.shape[0]
+    edges = [(i, j) for i in range(n) for j in range(i + 1, n) if adjacency.iloc[i, j] == 1]
+    m = len(edges)
+    edges_ = [adjacency.columns[edge[0]] + '_' + adjacency.columns[edge[1]] for edge in edges]
+    M = np.zeros((n, m), dtype=int)
+    for e_idx, (i, j) in enumerate(edges):
+        M[i, e_idx] = 1
+        M[j, e_idx] = 1
+
+    B = M.T @ M
+    np.fill_diagonal(B, 0)
+    return [B, edges_]
+
+
 def line_graph(cov_data, TICKERS, corr_thres = 0.25, ratio_thres = 0.1):
     """
     Construct the line graph adjacency matrix given covariance/variance data
@@ -427,7 +444,7 @@ def log_data_to_cov_data(path: str, rule: str):
     return cov_data
 
 
-def UAR_model(Y, K, test_size, forecast_step):
+def UAR_model(Y, test_set, K, test_size, forecast_step):
     # Univariate AR Edge Model
 
     df_AR = np.array(Y.copy())
@@ -445,13 +462,16 @@ def UAR_model(Y, K, test_size, forecast_step):
             window_data = df_AR[j, i:]
             model = AutoReg(window_data, lags=best_p[j]).fit()
             forecast_AR[i, j, :] = model.predict(start=len(window_data), end=len(window_data) + forecast_step - 1)
-        df_AR = np.append(df_AR, forecast_AR[i, :, 0:1], axis=1)
+        df_AR = np.append(df_AR, test_set[i, :, 0:1], axis=1)
 
     with open(os.path.join('data\\LOBSTERdata\\output\\train\\aggregate', 'forecast_AR.npy'), 'wb') as f:
         np.save(f, forecast_AR)
 
+    RMSE_AR = np.sqrt(np.mean((forecast_AR - test_set) ** 2))
+    print(f'RMSE for UAR Edge model is: {RMSE_AR}')
 
-def VAR_model(Y, K, test_size, forecast_step):
+
+def VAR_model(Y, test_set, K, test_size, forecast_step):
     # VAR Edge Model
 
     df_VAR = np.array(Y.T.copy())
@@ -464,12 +484,25 @@ def VAR_model(Y, K, test_size, forecast_step):
         window_data = df_VAR[i:, :]
         model = VAR(window_data).fit(best_lag_var)
         forecast_VAR[i, :, :] = model.forecast(window_data[-model.k_ar:, :], steps=forecast_step).T
-        df_VAR = np.append(df_VAR, forecast_VAR[i, :, 0:1].T, axis=0)
+        df_VAR = np.append(df_VAR, test_set[i, :, 0:1].T, axis=0)
 
     with open(os.path.join('data\\LOBSTERdata\\output\\train\\aggregate', 'forecast_VAR.npy'), 'wb') as f:
         np.save(f, forecast_VAR)
 
-def OU_model(Y, K, test_size, forecast_step, R_L, C, jump_activity, P_, Q_):
+    RMSE_VAR = np.sqrt(np.mean((forecast_VAR - test_set) ** 2))
+    print(f'RMSE for VAR Edge model is: {RMSE_VAR}')
+
+
+def NA_model(Y, test_set):
+    # Naive Model
+
+    forecast_NA = np.append(np.array(Y.copy())[:, -1].reshape(-1, 1)[np.newaxis, :, :], test_set[:-1], axis=0)
+
+    RMSE_NA = np.sqrt(np.mean((forecast_NA - test_set) ** 2))
+    print(f'RMSE for Naive model is: {RMSE_NA}')
+
+
+def OU_edge_model(Y, test_set, K, test_size, forecast_step, R_L, C, jump_activity, P_, Q_):
     # OU Edge model
 
     forecast_OU = np.zeros((test_size, K, forecast_step))
@@ -501,16 +534,111 @@ def OU_model(Y, K, test_size, forecast_step, R_L, C, jump_activity, P_, Q_):
             # for l >= 3
             else:
                 theta_hat_OU = minimize(lambda x: -np.matmul(x, H) + 0.5 * np.matmul(x, np.matmul(HH, x)), theta_hat_OU,
-                                        constraints=({'type': 'ineq', 'fun': lambda x: hurwitz_principal_minors(x)}, {'type': 'ineq', 'fun': lambda x: x}), method='SLSQP').x
+                                        constraints=({'type': 'ineq', 'fun': lambda x: hurwitz_principal_minors(x)},
+                                                     {'type': 'ineq', 'fun': lambda x: x}), method='SLSQP').x
             theta_hat_OU = np.clip(theta_hat_OU, 1e-16, None)
             X_OU.alpha_set(theta_hat_OU)
             X_OU.beta_set([[0] * stage * C for stage in R_L])
-            Q_Q = X_OU.Q_matrix()
+            Q_Q = X_OU.Q_matrix(False)
 
         alphas_OU.append(theta_hat_OU)
-        forecast_OU[i, :, :] = np.mean(np.array([simulate_MCAR_compound_poisson([i for i in range(forecast_step + 1)],
-                                                                                Q_Q, np.append(window_data[:, -1], [0] * K * (len(R_L) - 1)), b_OU, Sigma_OU, 1, jump_F_OU, uniform=True)[:, 1:] for _ in range(1000)]), axis=0)
-        df_OU = np.append(df_OU, forecast_OU[i, :, 0:1], axis=1)
+        forecast_OU[i, :, :] = np.mean(np.array([simulate_MCAR_compound_poisson([i for i in range(forecast_step + 1)],Q_Q,
+                                        np.append(window_data[:, -1], [0] * K * (len(R_L) - 1)), b_OU, Sigma_OU, 1,
+                                        jump_F_OU, uniform=True)[:, 1:] for _ in range(1000)]), axis=0)
+        df_OU = np.append(df_OU, test_set[i, :, 0:1], axis=1)
 
-    with open(os.path.join('data\\LOBSTERdata\\output\\train\\aggregate', 'forecast_OU.npy'), 'wb') as f:
+    with open(os.path.join('data\\LOBSTERdata\\output\\train\\aggregate', f'forecast_OU_{len(R_L)}.npy'), 'wb') as f:
         np.save(f, forecast_OU)
+
+    RMSE_OU = np.sqrt(np.mean((forecast_OU - test_set) ** 2))
+    print(f'RMSE for OU({len(R_L)}) Edge model is: {RMSE_OU}')
+
+
+def grOU_edge_model(Y, Adj, test_set, K, test_size, forecast_step, R_L, C, jump_activity, P_, Q_):
+    # graph OU Edge model
+
+    # Derive the adjacency matrix for edge graph
+    Adj_L = adjacency_matrices(Adj[0], max(R_L))
+
+    # Compute the edge weight
+    W_C = edge_weight(Adj_L)
+
+    X = GraphOUEdge(R_L, K, C, Adj_L, W_C, 'data\\LOBSTERdata\\output\\train\\aggregate', 'plots')
+    aic = X.estimate_unknown_Levy(Y, f'{jump_activity}') * -2 + 2 * (len(R_L) + sum(R_L) * C)
+    b = np.load(f'./data/LOBSTERdata/output/train/aggregate/MCAR_estimates_b_{jump_activity}.npy')
+    Sigma = np.load(f'./data/LOBSTERdata/output/train/aggregate/MCAR_estimates_Sigma_{jump_activity}.npy')
+    F_mean = np.load(f'./data/LOBSTERdata/output/train/aggregate/MCAR_estimates_F_mean_{jump_activity}.npy')
+    F_squared = np.load(f'./data/LOBSTERdata/output/train/aggregate/MCAR_estimates_F_squared_{jump_activity}.npy')
+
+    forecast_grOU = np.zeros((test_size, K, forecast_step))
+    df_grOU = np.array(Y.copy())
+    jump_F = scipy.stats.multivariate_normal(mean=F_mean, cov=(F_squared - np.outer(F_mean, F_mean)), allow_singular=True)
+    alphas = []
+    betas = []
+
+    for i in range(test_size):
+        window_data = df_grOU[:, i:]
+        theta_hat, HH, H = estimate_grCAR_drift(window_data, Adj_L, W_C, len(R_L), R_L, C, P_, Q_, b, None, Sigma, with_cov=True)
+
+        # Fetch parameters
+        idx = 0
+        alpha_pred = []
+        beta_pred = []
+        for r in R_L:
+            alpha_pred.append(theta_hat[idx])
+            beta_pred.append(theta_hat[(idx + 1):(idx + 1 + r * C)])
+            idx += 1 + r * C
+        X.alpha_set(alpha_pred)
+        X.beta_set(beta_pred)
+
+        try:
+            Q_Q = X.Q_matrix()
+        except:
+            x = cp.Variable(len(R_L) + sum(R_L))
+
+            # Objective function
+            objective = cp.Minimize(-H.T @ x + 0.5 * cp.quad_form(x, HH))
+
+            # Constraint: the symmetric part of Q_Q is negative definite
+            epsilon = 0
+            constraints = [estimator_to_QQ_cp(x, R_L, C, W_C, Adj_L, K) << -epsilon * np.eye(len(R_L) * K)]
+
+            # Problem setup
+            prob = cp.Problem(objective, constraints)
+            try:
+                prob.solve(solver=cp.CVXOPT, abstol=1e-5, reltol=1e-5, feastol=1e-5)
+                theta_hat = x.value
+                if theta_hat is None:
+                    prob.solve(solver=cp.MOSEK)
+                    theta_hat = x.value
+            except:
+                prob.solve(solver=cp.MOSEK)
+                theta_hat = x.value
+                if theta_hat is None:
+                    prob.solve(solver=cp.SCS)
+                    theta_hat = x.value
+            idx = 0
+            alpha_pred = []
+            beta_pred = []
+            for r in R_L:
+                alpha_pred.append(theta_hat[idx])
+                beta_pred.append(theta_hat[(idx + 1):(idx + 1 + r * C)])
+                idx += 1 + r * C
+            X.alpha_set(alpha_pred)
+            X.beta_set(beta_pred)
+            Q_Q = X.Q_matrix(False)
+
+        alphas.append(alpha_pred)
+        betas.append(beta_pred)
+
+        # Make predictions
+        forecast_grOU[i, :, :] = np.mean(np.array([simulate_MCAR_compound_poisson([i for i in range(forecast_step + 1)],
+                                        Q_Q, np.append(window_data[:, -1], [0] * K * (len(R_L) - 1)), b, Sigma, 1,
+                                        jump_F, uniform=True)[:, 1:] for _ in range(1000)]), axis=0)
+        df_grOU = np.append(df_grOU, test_set[i, :, 0:1], axis=1)
+
+    with open(os.path.join('data\\LOBSTERdata\\output\\train\\aggregate', f'forecast_grOU_{len(R_L)}_{R_L}.npy'), 'wb') as f:
+        np.save(f, forecast_grOU)
+
+    RMSE_grOU = np.sqrt(np.mean((forecast_grOU - test_set) ** 2))
+    print(f'RMSE for graph OU({len(R_L)}_{R_L}) Edge model is: {RMSE_grOU}')

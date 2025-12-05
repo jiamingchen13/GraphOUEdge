@@ -171,7 +171,7 @@ def simulate_MCAR_approx(P: np.ndarray, A: np.ndarray, x0: np.ndarray, a: np.nda
     else:
         raise ValueError("output_format must be one of ['MCAR', 'SS', 'SS + L', 'SS + L + jump_L']")
 
-def simulate_MCAR_compound_poisson(P: np.ndarray, A: np.ndarray, x0: np.ndarray, a: np.ndarray, Sigma: np.ndarray, rate: float, jump_F: Optional[scipy.stats._multivariate.multi_rv_frozen], output_format: str = 'MCAR', uniform=False):
+def simulate_MCAR_compound_poisson(P, A: np.ndarray, x0: np.ndarray, a: np.ndarray, Sigma: np.ndarray, rate: float, jump_F: Optional[scipy.stats._multivariate.multi_rv_frozen], output_format: str = 'MCAR', uniform=False):
     """
     Simulate (discrete) paths from a MCAR model with state-transition matrix A and driving Levy process (with finite Levy measure)
     with triplet (a, Sigma, F).
