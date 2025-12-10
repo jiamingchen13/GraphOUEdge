@@ -470,6 +470,10 @@ def UAR_model(Y, test_set, K, test_size, forecast_step):
     RMSE_AR = np.sqrt(np.mean((forecast_AR - test_set) ** 2))
     print(f'RMSE for UAR Edge model is: {RMSE_AR}')
 
+    last_ = np.append(np.array(Y.copy())[:, -1].reshape(-1, 1)[np.newaxis, :, :], test_set[:-1, :, 0:1], axis=0)
+    forecast_AR_dir = np.sign(np.diff(np.append(last_, forecast_AR, axis=2), axis=2))
+    test_set_dir = np.sign(np.diff(np.append(last_, test_set, axis=2), axis=2))
+    print(f'Direction success rate for UAR Edge model is: {(test_set_dir == forecast_AR_dir).mean()}')
 
 def VAR_model(Y, test_set, K, test_size, forecast_step):
     # VAR Edge Model
@@ -492,11 +496,16 @@ def VAR_model(Y, test_set, K, test_size, forecast_step):
     RMSE_VAR = np.sqrt(np.mean((forecast_VAR - test_set) ** 2))
     print(f'RMSE for VAR Edge model is: {RMSE_VAR}')
 
+    last_ = np.append(np.array(Y.copy())[:, -1].reshape(-1, 1)[np.newaxis, :, :], test_set[:-1, :, 0:1], axis=0)
+    forecast_VAR_dir = np.sign(np.diff(np.append(last_, forecast_VAR, axis=2), axis=2))
+    test_set_dir = np.sign(np.diff(np.append(last_, test_set, axis=2), axis=2))
+    print(f'Direction success rate for VAR Edge model is: {(test_set_dir == forecast_VAR_dir).mean()}')
 
-def NA_model(Y, test_set):
+
+def NA_model(Y, test_set, forecast_step):
     # Naive Model
 
-    forecast_NA = np.append(np.array(Y.copy())[:, -1].reshape(-1, 1)[np.newaxis, :, :], test_set[:-1], axis=0)
+    forecast_NA = np.repeat(np.append(np.array(Y.copy())[:, -1].reshape(-1, 1)[np.newaxis, :, :], test_set[:-1, :, 0:1], axis=0), forecast_step, axis=2)
 
     RMSE_NA = np.sqrt(np.mean((forecast_NA - test_set) ** 2))
     print(f'RMSE for Naive model is: {RMSE_NA}')
@@ -552,6 +561,11 @@ def OU_edge_model(Y, test_set, K, test_size, forecast_step, R_L, C, jump_activit
 
     RMSE_OU = np.sqrt(np.mean((forecast_OU - test_set) ** 2))
     print(f'RMSE for OU({len(R_L)}) Edge model is: {RMSE_OU}')
+
+    last_ = np.append(np.array(Y.copy())[:, -1].reshape(-1, 1)[np.newaxis, :, :], test_set[:-1, :, 0:1], axis=0)
+    forecast_OU_dir = np.sign(np.diff(np.append(last_, forecast_OU, axis=2), axis=2))
+    test_set_dir = np.sign(np.diff(np.append(last_, test_set, axis=2), axis=2))
+    print(f'Direction success rate for OU({len(R_L)}) Edge model is: {(test_set_dir == forecast_OU_dir).mean()}')
 
 
 def grOU_edge_model(Y, Adj, test_set, K, test_size, forecast_step, R_L, C, jump_activity, P_, Q_):
@@ -642,3 +656,8 @@ def grOU_edge_model(Y, Adj, test_set, K, test_size, forecast_step, R_L, C, jump_
 
     RMSE_grOU = np.sqrt(np.mean((forecast_grOU - test_set) ** 2))
     print(f'RMSE for graph OU({len(R_L)}_{R_L}) Edge model is: {RMSE_grOU}')
+
+    last_ = np.append(np.array(Y.copy())[:, -1].reshape(-1, 1)[np.newaxis, :, :], test_set[:-1, :, 0:1], axis=0)
+    forecast_grOU_dir = np.sign(np.diff(np.append(last_, forecast_grOU, axis=2), axis=2))
+    test_set_dir = np.sign(np.diff(np.append(last_, test_set, axis=2), axis=2))
+    print(f'Direction success rate for graph OU({len(R_L)}_{R_L}) Edge model is: {(test_set_dir == forecast_grOU_dir).mean()}')
