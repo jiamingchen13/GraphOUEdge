@@ -3,7 +3,6 @@ import glob
 import math
 import re
 import pandas as pd
-import numpy as np
 import matplotlib.pyplot as plt
 import cvxpy as cp
 from numpy.linalg import det
@@ -252,7 +251,7 @@ def MRC(Y):
     if n == 0:
         return None
 
-    N = math.ceil((n - 1) ** .61 * .5)
+    N = math.ceil((n - 1) ** .61 * 1)
     k_n = N if N % 2 == 0 else N + 1
     half = k_n // 2
     m = n - k_n + 1  # number of valid indices i
@@ -520,6 +519,7 @@ def VAR_model(Y, test_set, K, test_size, forecast_step):
 
     df_VAR = np.array(Y.T.copy())
     model = VAR(df_VAR)
+
     # automatic lag selection by AIC
     best_lag_var = model.select_order(maxlags=5).aic
 
@@ -574,7 +574,7 @@ def OU_edge_model(Y, test_set, K, test_size, forecast_step, R_L, C, jump_activit
         X_OU.alpha_set(theta_hat_OU)
         X_OU.beta_set([[0] * stage * C for stage in R_L])
         try:
-            Q_Q = X_OU.Q_matrix()
+            Q_Q = X_OU.Q_matrix(False)
         except:
             # for l = 1 or 2
             if len(R_L) < 3:
