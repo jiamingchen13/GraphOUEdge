@@ -15,12 +15,13 @@ def reshape_array(array, d):
 def MCAR_A(AA: np.ndarray) -> np.ndarray:
     """
     Construct MCAR structural matrix from parameters A.
-    :param AA: MCAR parameters, list of p (d, d) np.ndarrays
+    :param AA: MCAR parameters, list of p (d, d) np.ndarray
     :return A_AA: MCAR structural matrix, (pd, pd) np.ndarray
     """
     # get dimensions
     p = len(AA)
     d = AA[0].shape[0]
+
     # compute MCAR state-transition matrix
     A_AA = np.zeros([p*d, p*d])
     for i in range(d, p*d, d):
@@ -33,15 +34,16 @@ def simulate_MCAR_stat_distr_approx(A: np.ndarray, a: np.ndarray, Sigma: np.ndar
     """
     Simulate from stationary distribution of MCAR process by approximating integral discretely.
     :param A: MCAR state-transition matrix, (pd, pd) np.ndarray
-    :param a: drift of Levy process with truncation function t(z) = 0, i.e. E[L_1] = a + \int_{R^d} x F(dx), (d,) np.ndarray
+    :param a: drift of Levy process with truncation function t(z) = 0, i.e. E[L_1] = a + \int_{R^d} x F(dx), (d, ) np.ndarray
     :param Sigma: covariance of Brownian component of Levy process, (d, d) np.ndarray
     :param jumps: function for generating n jump increments over an interval delta_t, Callable[[float, float], np.ndarray] instead of distribution of jumps
-    :return x: sample from stationary distribution, (pd,) np.ndarray
+    :return x: sample from stationary distribution, (pd, ) np.ndarray
     """
     pd = A.shape[0]
     d = a.shape[0]
     E = np.zeros([pd, d])
     E[-d:,:] = np.eye(d)
+
     # approximate integral, choose T depending on |A| (depending on how fast e^As decays)
     T = - np.log(1e-8) / np.linalg.norm(A)
     N = 1000
@@ -58,11 +60,11 @@ def simulate_MCAR_stat_distr_compound_poisson(A: np.ndarray, a: np.ndarray, Sigm
     """
     Simulate from stationary distribution of finite activity MCAR process exactly.
     :param A: MCAR state-transition matrix, (pd, pd) np.ndarray
-    :param a: drift of Levy process with truncation function t(z) = 0, i.e. E[L_1] = a + \int_{R^d} x F(dx), (d,) np.ndarray
+    :param a: drift of Levy process with truncation function t(z) = 0, i.e. E[L_1] = a + \int_{R^d} x F(dx), (d, ) np.ndarray
     :param Sigma: covariance of Brownian component of Levy process, (d, d) np.ndarray
     :param rate: jump rate of Levy process, float
     :param jump_F: distribution of jumps, scipy.stats._multivariate.multi_rv_frozen
-    :return x: sample from stationary distribution, (pd,) np.ndarray
+    :return x: sample from stationary distribution, (pd, ) np.ndarray
     """
     if rate > 0 and jump_F is None:
         raise ValueError("jump_F must be provided if rate > 0")
@@ -82,7 +84,13 @@ def simulate_MCAR_stat_distr_compound_poisson(A: np.ndarray, a: np.ndarray, Sigm
     M[pd:, pd:] = - A.T
     V = scipy.linalg.expm(M*T)[:pd, pd:].dot(scipy.linalg.expm(A*T).T)
 
-    a_component = - np.linalg.pinv(A).dot(E).dot(a)
+    try:
+        A_inv = np.linalg.pinv(A)
+    except:
+        # ridge-regularized
+        A_inv = np.linalg.solve(A.T @ A + 1e-9 * np.eye(A.shape[0]), A.T)
+
+    a_component = - A_inv.dot(E).dot(a)
     W_component = scipy.stats.multivariate_normal(cov=V, allow_singular=True).rvs(size=1).T
 
     # increment due to jumps
@@ -99,12 +107,11 @@ def simulate_MCAR_stat_distr_compound_poisson(A: np.ndarray, a: np.ndarray, Sigm
 
 def simulate_MCAR_approx(P: np.ndarray, A: np.ndarray, x0: np.ndarray, a: np.ndarray, Sigma: np.ndarray, jumps: Optional[Callable[[float, float], np.ndarray]], output_format: str = 'MCAR', uniform=False):
     """
-    Simulate (discrete) paths from a MCAR model with state-transition matrix A and driving Levy process (with finite Levy measure)
-    with triplet (b, Sigma, F) using Euler-Maruyama method:
-    :param P: partition over which to simulate the MCAR process [0 = t_0, t_1, ..., t_N = T], (N+1,) np.ndarray
+    Simulate (discrete) paths from a MCAR model with state-transition matrix A and driving Levy process (with finite Levy measure) with triplet (b, Sigma, F) using Euler-Maruyama method.
+    :param P: partition over which to simulate the MCAR process [0 = t_0, t_1, ..., t_N = T], (N+1, ) np.ndarray
     :param A: MCAR state-transition matrix, (pd, pd) np.ndarray
     :param x0: state space initial condition, (pd, ) np.ndarray
-    :param a: drift of Levy process with truncation function t(z) = 0, i.e. E[L_1] = a + \int_{R^d} x F(dx), (d,) np.ndarray
+    :param a: drift of Levy process with truncation function t(z) = 0, i.e. E[L_1] = a + \int_{R^d} x F(dx), (d, ) np.ndarray
     :param Sigma: covariance of Brownian component of Levy process, (d, d) np.ndarray
     :param jumps: function for generating n jump increments over a time interval delta_t, function(delta_t, n) instead of distribution of jumps
     :param output_format: format of output, str in ['MCAR', 'SS', 'SS + L', 'SS + L + jump_L']
@@ -173,17 +180,16 @@ def simulate_MCAR_approx(P: np.ndarray, A: np.ndarray, x0: np.ndarray, a: np.nda
 
 def simulate_MCAR_compound_poisson(P, A: np.ndarray, x0: np.ndarray, a: np.ndarray, Sigma: np.ndarray, rate: float, jump_F: Optional[scipy.stats._multivariate.multi_rv_frozen], output_format: str = 'MCAR', uniform=False):
     """
-    Simulate (discrete) paths from a MCAR model with state-transition matrix A and driving Levy process (with finite Levy measure)
-    with triplet (a, Sigma, F).
+    Simulate (discrete) paths from a MCAR model with state-transition matrix A and driving Levy process (with finite Levy measure) with triplet (a, Sigma, F).
     X_t = e^{A(t-s)} X_s + int_s^t e^{A(t-r)} dL_r = e^{A(t-s)}X_s + int_s^t e^{A(t-r)} (a dr + dW_r + dJ_r)
     where int_s^t e^{A(t-r)} a dr = (e^{A(t-s)} - I) A^{-1} a
           int_s^t e^{A(t-r)} dW_r ~ N(0, F(t-s) e^{A^T(t-s)}) where e^Mh = [e^{Ah}, F(h) // 0, e^{-A^Th}] with M = [A, Σ // 0, -A^T] for W~N(0, Σ)
           int_s^t e^{A(t-r)} dJ_r = sum_{r\in[s,t]} e^{A(t-r)} ΔJ_{r}
     recall need to multiply E b, E Sigma E^T, and E jumps
-    :param P: partition over which to simulate the MCAR process [0 = t_0, t_1, ..., t_N = T], (N+1,) np.ndarray
+    :param P: partition over which to simulate the MCAR process [0 = t_0, t_1, ..., t_N = T], (N+1, ) np.ndarray
     :param A: MCAR state-transition matrix, (pd, pd) np.ndarray
     :param x0: state space initial condition, (pd, ) np.ndarray
-    :param a: drift of Levy process with truncation function t(z) = 0, i.e. E[L_1] = a + \int_{R^d} x F(dx), (d,) np.ndarray
+    :param a: drift of Levy process with truncation function t(z) = 0, i.e. E[L_1] = a + \int_{R^d} x F(dx), (d, ) np.ndarray
     :param Sigma: covariance of Brownian component of Levy process, (d, d) np.ndarray
     :param rate: jump rate of Levy process, float
     :param jump_F: distribution of jumps, scipy.stats._multivariate.multi_rv_frozen
@@ -303,8 +309,7 @@ def simulate_MCAR_compound_poisson(P, A: np.ndarray, x0: np.ndarray, a: np.ndarr
 
 def gamma_increments(delta_t: float, n: int, d: int, shape: float, scale: float = 1):
     """
-    Generate n increments of a d-dimensional process with independent symmetric Gamma components
-    over an interval of size delta_t.
+    Generate n increments of a d-dimensional process with independent symmetric Gamma components over an interval of size delta_t.
     :param delta_t: time step of increment, float
     :param n: number of increments to generate, int
     :param shape: shape of Gamma distribution, float

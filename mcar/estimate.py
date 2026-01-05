@@ -1,22 +1,20 @@
 import numpy as np
 from typing import Callable, List
 import warnings
-from numpy.linalg import det
-from scipy.optimize import minimize
-import cvxpy as cp
 
 def state_space(Y: np.ndarray, p: int, P: np.ndarray) -> np.ndarray:
     """
     Construct state-space representation of process from observation Y up to order p-1.
     :param Y: MCAR process observation, (d, N+1) np.ndarray
     :param p: state space order, int
-    :param P: partition over which to simulate the MCAR process [0=t_0, t_1, ..., t_N = T], (N+1,) np.ndarray
+    :param P: partition over which to simulate the MCAR process [0=t_0, t_1, ..., t_N = T], (N+1, ) np.ndarray
     :return X: state space representation (first d entries are Y), (pd, N+1) np.ndarray
     """
     # get dimensions
     d, N = Y.shape
     X = np.zeros([p*d, N])
     X[:d, :] = Y
+
     # differentiate p-1 times to get state space representation
     for i in range(1, p):
         X[d*i:d*(i+1), :-1] = np.diff(X[d*(i-1):d*i, :], axis=1) / (P[1:] - P[:-1])
@@ -31,17 +29,17 @@ def estimate_MCAR_drift(Y: np.ndarray, p: int, P: np.ndarray, Q: np.ndarray, b: 
 
     :param Y: MCAR process observation, (d, N+1) np.ndarray
     :param p: MCAR parameter, int
-    :param P: finer partition over which we observe the MCAR process [0 = s_0, ..., s_N = T], (N+1,) np.ndarray
-    :param Q: coarser partition over which to approximate the integrals [0 = u_0, ..., u_M = T], (M+1,) np.ndarray
-    :param b: drift parameter of Levy process, (d,) np.ndarray
+    :param P: finer partition over which we observe the MCAR process [0 = s_0, ..., s_N = T], (N+1, ) np.ndarray
+    :param Q: coarser partition over which to approximate the integrals [0 = u_0, ..., u_M = T], (M+1, ) np.ndarray
+    :param b: drift parameter of Levy process, (d, ) np.ndarray
     :param nu: thresholding sequence, (d, M) np.ndarray
     :param with_cov: whether to return the vectorized estimator with its estimated covariance, bool
     :param Sigma: covariance matrix of the driving Levy process - only needed if with_cov is True, (d, d) np.ndarray
     :return if with_cov is True:
-                vec_AA_hat: vectorized estimated MCAR drift parameters, (pd**2,) np.ndarray
+                vec_AA_hat: vectorized estimated MCAR drift parameters, (pd**2, ) np.ndarray
                 HH: estimated covariance of the estimated MCAR parameters, (pd**2, pd**2) np.ndarray
             else:
-                AA_hat: estimated MCAR drift parameters, list of p (d, d) np.ndarrays
+                AA_hat: estimated MCAR drift parameters, list of p (d, d) np.ndarray
     """
     # get dimension
     d = Y.shape[0]
@@ -73,7 +71,6 @@ def estimate_MCAR_drift(Y: np.ndarray, p: int, P: np.ndarray, Q: np.ndarray, b: 
         AA_hat = inv_vectorize_AA(vec_AA_hat, p)
         return AA_hat
 
-# Estimate grCAR parameter theta from state space observation
 def estimate_grCAR_drift(Y: np.ndarray, A, W_C, p: int, R_L: np.ndarray, C: int, P: np.ndarray, Q: np.ndarray, b: np.ndarray, nu: np.ndarray = None, Sigma: np.ndarray = None, with_cov: bool = False):
     """
     Estimate grCAR drift parameters from the realisation of a grCAR process with driving Levy triplet (b, Sigma, F).
@@ -81,22 +78,20 @@ def estimate_grCAR_drift(Y: np.ndarray, A, W_C, p: int, R_L: np.ndarray, C: int,
         - no truncation t(x) = 0 when the process has finite jump activity, thus E[L_1] = b + \int_{R^d} z F(dz).
         - classic truncation t(x) = 1_{|x|<=1} when the process has infinite jump activity, thus E[L_1] = b + \int_{|z|>1} z F(dz).
     :param Y: MCAR process observation, (d, N+1) np.ndarray
-    :param A: graph adjacency matrix, maximum stage of (d, d) np.ndarray
+    :param A: Graph adjacency matrix, maximum stage of (d, d) np.ndarray
     :param W_C: Edge weights for Covariates
-    :param p: GrCAR parameter, int
-    :param R_L: Maximum stage for each Lag
-    :param C: Covariates
-    :param P: finer partition over which we observe the GrCAR process [0 = s_0, ..., s_N = t], (N+1,) np.ndarray
-    :param Q: coarser partition over which to approximate the integrals [0 = u_0, ..., u_M = t], (M+1,) np.ndarray
-    :param b: drift of Levy process, (d,) np.ndarray
-    :param nu: thresholding sequence, (d, M) np.ndarray
-    :param Sigma: covariance matrix of the driving Levy process, (d, d) np.ndarray
+    :param p: Number of considered lags, int
+    :param R_L: Maximum stage for each Lag, list of int
+    :param C: Covariates, int
+    :param P: Finer partition over which we observe the GrCAR process [0 = s_0, ..., s_N = t], (N+1, ) np.ndarray
+    :param Q: Coarser partition over which to approximate the integrals [0 = u_0, ..., u_M = t], (M+1, ) np.ndarray
+    :param b: Drift of Levy process, (d, ) np.ndarray
+    :param nu: Thresholding sequence, (d, M) np.ndarray
+    :param Sigma: Covariance matrix of the driving Levy process, (d, d) np.ndarray
     :param with_cov: whether to return the vectorized estimator with its estimated covariance, bool
     :return if with_cov is True:
-                vec_theta_hat: vectorized estimated grCAR parameters, (2p,) np.ndarray
-                KK: estimated covariance of the estimated grCAR parameters, (2p, 2p) np.ndarray
-            else:
-                theta_hat: estimated grCAR parameters, (p, 2) np.ndarray
+                vec_theta_hat: vectorized estimated grCAR parameters, (p + sum(R_L) * C, ) np.ndarray
+                KK: estimated covariance of the estimated grCAR parameters, (p + sum(R_L) * C, p + sum(R_L) * C) np.ndarray
     """
     # approximate the state space representation by finite differences over P
     X = state_space(Y, p, P)
@@ -199,7 +194,6 @@ def estimate_grCAR_drift(Y: np.ndarray, A, W_C, p: int, R_L: np.ndarray, C: int,
     # compute and return theta_hat
     vec_theta_hat = np.matmul(np.linalg.pinv(KK), K)
 
-
     if with_cov and Sigma is not None:
         return vec_theta_hat, KK, K
     elif with_cov and Sigma is None:
@@ -218,17 +212,15 @@ def estimate_OU_drift(Y: np.ndarray, R_L: np.ndarray, E: int, C: int, P: np.ndar
     :param R_L: Maximum stage for each Lag
     :param E: Number of edges
     :param C: Covariates
-    :param P: finer partition over which we observe the GrCAR process [0 = s_0, ..., s_N = t], (N+1,) np.ndarray
-    :param Q: coarser partition over which to approximate the integrals [0 = u_0, ..., u_M = t], (M+1,) np.ndarray
-    :param b: drift of Levy process, (d,) np.ndarray
+    :param P: finer partition over which we observe the GrCAR process [0 = s_0, ..., s_N = t], (N+1, ) np.ndarray
+    :param Q: coarser partition over which to approximate the integrals [0 = u_0, ..., u_M = t], (M+1, ) np.ndarray
+    :param b: drift of Levy process, (d, ) np.ndarray
     :param nu: thresholding sequence, (d, M) np.ndarray
     :param Sigma: covariance matrix of the driving Levy process, (d, d) np.ndarray
     :param with_cov: whether to return the vectorized estimator with its estimated covariance, bool
     :return if with_cov is True:
                 vec_theta_hat: vectorized estimated OU parameters
                 KK: estimated covariance of the estimated OU parameters
-            else:
-                theta_hat: estimated OU parameters
     """
     # approximate the state space representation by finite differences over P
     p = len(R_L)
@@ -320,31 +312,14 @@ def estimate_OU_drift(Y: np.ndarray, R_L: np.ndarray, E: int, C: int, P: np.ndar
     else:
         return vec_theta_hat
 
-def hurwitz_principal_minors(a):
-    #a = [a_1, a_2,..., a_l] length l
-    n = len(a)
-    H = np.zeros((n, n))
-    for i in range(n):
-        for j in range(n):
-            idx = 2 * j - i + 1
-            if 0 < idx <= n:
-                H[i,j] = a[idx - 1]
-            elif idx == 0:
-                H[i,j] = 1   # coefficient of lambda^n (monic) when appears
-            else:
-                H[i,j] = 0
-    # compute leading principal minors Delta_k
-    deltas = [det(H[:k, :k]) for k in range(1, n+1)]
-    return np.array(deltas)
-
 def recover_BDLP(Y: np.ndarray, p: int, P: np.ndarray, Q: np.ndarray, AA: np.ndarray):
     """
     Recover the increments of the background driving Levy process L over coarser partition Q from MCAR observation Y over finer partition P with parameters AA.
     :param Y: MCAR process observation, (d, N+1) np.ndarray
     :param p: MCAR parameter, int
-    :param P: finer partition over which we observe the MCAR process [0 = s_0, ..., s_N = t], (N+1,) np.ndarray
-    :param Q: coarser partition over which we recover the Levy increments [0 = u_0, ..., u_M = T], (M+1,) np.ndarray
-    :param AA: MCAR parameters, list of p (d, d) np.ndarrays
+    :param P: finer partition over which we observe the MCAR process [0 = s_0, ..., s_N = t], (N+1, ) np.ndarray
+    :param Q: coarser partition over which we recover the Levy increments [0 = u_0, ..., u_M = T], (M+1, ) np.ndarray
+    :param AA: MCAR parameters, list of p (d, d) np.ndarray
     :return DeltaL_Q: increments of the background driving Levy process L on the partition Q, (d, M) np.ndarray
     """
     # get dimensions and time horizon
@@ -386,17 +361,18 @@ def disentangle_BM(DeltaL: np.ndarray, Q: np.ndarray, Sigma: np.ndarray, gamma: 
     Disentangle Brownian-only increments on the partition Q.
     To define the critical region B_N we generalize the approach in (Gegler, 2011) to irregularly spaced data.
     :param DeltaL: increments of Levy process on the partition Q, (d, N) np.ndarray
-    :param Q: partition, [0 = u_0, ..., u_{N} = T], (N+1,) np.ndarray
+    :param Q: partition, [0 = u_0, ..., u_{N} = T], (N+1, ) np.ndarray
     :param Sigma: covariance of the Brownian part of the Levy process, (d, d) np.ndarray
     :param gamma: hyperparameter for defining the critical region > 1, float
     :return DeltaW: subset of elements of DeltaL corresponding to the diffusion part only, (d, M) np.ndarray with M <= N
-            DeltaQ_W: time increments corresponding to the elements in DeltaW, (M,) np.ndarray
+            DeltaQ_W: time increments corresponding to the elements in DeltaW, (M, ) np.ndarray
     """
     # identify critical region x^T Sigma_inv x <= beta*2*Delta*log(N)
     DeltaQ = np.diff(Q)
     N = len(DeltaQ)
     DeltaX = DeltaL
     subset = np.einsum('ki,ki->i', DeltaX, np.linalg.pinv(Sigma).dot(DeltaX)) <= 2*gamma*DeltaQ*np.log(N)
+
     # return Brownian increments
     DeltaQ_W = DeltaQ[subset]
     DeltaW = DeltaX[:, subset]
@@ -406,7 +382,7 @@ def estimate_Sigma(DeltaW: np.ndarray, DeltaQ: np.ndarray):
     """
     Estimate the covariance matrix Sigma from the (irregularly spaced) Brownian increments DeltaW.
     :param DeltaW: Brownian increments, (d, M)
-    :param DeltaQ: time increments corresponding to the elements in DeltaW, (M,) np.ndarray
+    :param DeltaQ: time increments corresponding to the elements in DeltaW, (M, ) np.ndarray
     """
     d = DeltaW.shape[0]
     if len(DeltaQ) == 0:
@@ -420,7 +396,7 @@ def estimate_Sigma_L(DeltaL: np.ndarray, Q: np.ndarray, epsilon: float = 0.01, g
     Estimate the covariance matrix Sigma of the Brownian component from (irregularly spaced) Levy increments.
     Use the iterative approach in (Gegler, 2011) Section 4.
     :param DeltaL: increments of Levy process on the partition Q, (d, N) np.ndarray
-    :param Q: partition, [0 = u_1, ..., u_N = T], (N+1,) np.ndarray
+    :param Q: partition, [0 = u_1, ..., u_N = T], (N+1, ) np.ndarray
     :param epsilon: tolerance level for defining convergence of iterative scheme, float
     :param gamma: hyperparameter for defining the critical region >1, float
     :return Sigma_hat: estimated covariance of the Brownian component, (d, d) np.ndarray
@@ -430,6 +406,7 @@ def estimate_Sigma_L(DeltaL: np.ndarray, Q: np.ndarray, epsilon: float = 0.01, g
     DeltaW = DeltaL
     Sigma_hat_new = estimate_Sigma(DeltaW, DeltaQ_W)
     converged = False
+
     # keep track of Sigmas to see if enter a loop
     Sigmas = [Sigma_hat_new]
     while not converged:
@@ -454,12 +431,12 @@ def estimate_integral_Levy_measure(DeltaL: np.ndarray, Q: np.ndarray, Sigma: np.
     Theoretical guarantees of convergence are given in (Gegler, 2011) for functions of the form f(z) = (z^T A z)^l for matrix A and power l.
     If Sigma is known use the rejection-region based estimator in (Gegler, 2011) Section 2, otherwise use the iterative approach in (Gegler, 2011) Section 4.
     :param DeltaL: increments of Levy process on the partition Q, (d, N) np.ndarray
-    :param Q: partition, [0 = u_1, ..., u_N = T], (N+1,) np.ndarray
+    :param Q: partition, [0 = u_1, ..., u_N = T], (N+1, ) np.ndarray
     :param Sigma: covariance of Brownian component of L, (d, d) np.ndarray
     :param epsilon: tolerance level for defining convergence of iterative scheme, float
     :param gamma: hyperparameter for defining the critical region > 1, float
-    :param K: integration region in functional, function mapping (d,) np.ndarray to bool
-    :param f: integrand function, function mapping (d,) np.ndarray to float
+    :param K: integration region in functional, function mapping (d, ) np.ndarray to bool
+    :param f: integrand function, function mapping (d, ) np.ndarray to float
     :return f_hat: estimated functional f of the Levy measure, float
     """
     if Sigma is None:
@@ -469,6 +446,7 @@ def estimate_integral_Levy_measure(DeltaL: np.ndarray, Q: np.ndarray, Sigma: np.
 
     DeltaQ = np.diff(Q)
     N = len(DeltaQ)
+
     # identify critical region x^T Sigma_inv x > beta*2*Delta*log(N)
     subset = np.logical_and(
         np.einsum('ki,ki->i', np.linalg.pinv(Sigma).dot(DeltaL), DeltaL) > 2*gamma*DeltaQ*np.log(N),
@@ -482,12 +460,11 @@ def estimate_integral_Levy_measure(DeltaL: np.ndarray, Q: np.ndarray, Sigma: np.
         f_hat = np.sum(np.array([f(DeltaZ[:, i]) for i in range(DeltaZ.shape[1])]), axis=0) / (Q[-1] - Q[0])
     return f_hat
 
-
 def choose_nu(DeltaL: np.ndarray, Q: np.ndarray, epsilon: float = 0.01, gamma: float = 1.01, Sigma: np.ndarray = None):
     """
     This function chooses thresholds nu to disentangle the continuous component from the jump component of a one dimensional Levy process.
     :param DeltaL: increments of Levy process on the partition Q, (1, N) np.ndarray
-    :param Q: partition, [0 = u_1, ..., u_N = T], (N+1,) np.ndarray
+    :param Q: partition, [0 = u_1, ..., u_N = T], (N+1, ) np.ndarray
     :param epsilon: tolerance level for defining convergence of iterative scheme, float
     :param gamma: hyperparameter for defining the critical region > 1, float
     :param Sigma: covariance of Brownian component of L, (1, 1) np.ndarray
@@ -497,7 +474,6 @@ def choose_nu(DeltaL: np.ndarray, Q: np.ndarray, epsilon: float = 0.01, gamma: f
     Sigma_hat = estimate_Sigma_L(DeltaL, Q, epsilon, gamma) if Sigma is None else Sigma
     nu = np.sqrt(DeltaQ * 2 * gamma * np.log(len(DeltaQ)) * Sigma_hat)
     return nu
-
 
 def estimate_MCAR(
         Y: np.ndarray,
@@ -538,24 +514,23 @@ def estimate_MCAR(
 
     :param Y: MCAR process observation, (d, N+1) np.ndarray
     :param p: MCAR parameter, int
-    :param P: finer partition over which we observe the MCAR process [0 = s_0, ..., s_N = t], (N+1,) np.ndarray
-    :param Q: coarser partition over which to approximate the integrals [0 = u_0, ..., u_M = t], (M+1,) np.ndarray
+    :param P: finer partition over which we observe the MCAR process [0 = s_0, ..., s_N = t], (N+1, ) np.ndarray
+    :param Q: coarser partition over which to approximate the integrals [0 = u_0, ..., u_M = t], (M+1, ) np.ndarray
     :param A: graph adjacency matrix, maximum stage of (d, d) np.ndarray
     :param W_C: Edge weights for Covariates
     :param R_L: Maximum stage for each Lag
     :param C: Covariates
     :param epsilon: tolerance level for defining convergence of iterative scheme, float
     :param max_iter: maximum number of iterations, int
-    :param b: drift parameter of Levy process, (d,) np.ndarray
+    :param b: drift parameter of Levy process, (d, ) np.ndarray
     :param Sigma: covariance matrix of the driving Levy process - only needed if with_cov is True, (d, d) np.ndarray
-    :param f: Levy measure component of drift parameter f:= \int_{|z|>1} z F(dz) or \int_{R^d} z F(dz), (d,) np.ndarray
-    :param mu: 'actual' drift of Levy process mu := E[L_1], (d,) np.ndarray
-    :return AA_hat: estimated MCAR drift parameters, list of p (d, d) np.ndarrays
-            b_hat: estimated driving Levy process drift parameter, (d,) np.ndarray
-            Sigma_hat: estimated driving Levy process covariance parameter, (d,) np.ndarray
+    :param f: Levy measure component of drift parameter f:= \int_{|z|>1} z F(dz) or \int_{R^d} z F(dz), (d, ) np.ndarray
+    :param mu: 'actual' drift of Levy process mu := E[L_1], (d, ) np.ndarray
+    :return AA_hat: estimated MCAR drift parameters, list of p (d, d) np.ndarray
+            b_hat: estimated driving Levy process drift parameter, (d, ) np.ndarray
+            Sigma_hat: estimated driving Levy process covariance parameter, (d, ) np.ndarray
     """
     d = Y.shape[0]
-
     b_hat = np.zeros(d) if b is None else b
     global_AA_hat = estimate_grCAR_drift(Y, A, W_C, p, R_L, C, P, Q, b_hat) if AA is None else AA
     AA_hat = estimator_to_QQ(global_AA_hat, R_L, C, W_C, A, d)
@@ -574,19 +549,16 @@ def estimate_MCAR(
     else:
         raise ValueError("jump_activity must be 'finite' or 'infinite.")
     b_hat = mu_hat - f_hat if b is None else b
-
     converged = False
 
     # keep track of parameters to check if we enter a loop
     AAs = [AA_hat]
     bs = [b_hat]
     Sigmas = [Sigma_hat]
-
     n_iter = 0
 
     while not converged:
         n_iter += 1
-
         global_AA_hat_new = estimate_grCAR_drift(Y, A, W_C, p, R_L, C, P, Q, b_hat) if AA is None else AA
         AA_hat_new = estimator_to_QQ(global_AA_hat_new, R_L, C, W_C, A, d)
         DeltaL = recover_BDLP(Y, p, P, Q, AA_hat_new)
@@ -680,16 +652,6 @@ def compute_H_HH(Y: np.ndarray, p: int, P: np.ndarray, Q: np.ndarray, b: np.ndar
                     HH[k*d**2+i*d:k*d**2+(i+1)*d, l*d**2+j*d:l*d**2+(j+1)*d] = Sigma_inv * integral
     return H, HH
 
-
-def vectorize_AA(AA: List[np.ndarray]) -> np.ndarray:
-    p = len(AA)
-    d = AA[0].shape[0]
-    vec_AA = np.zeros(p*d**2)
-    for i in range(p):
-        vec_AA[i*d**2:(i+1)*d**2] = AA[i].T.flatten()
-    return vec_AA
-
-
 def inv_vectorize_AA(vec_AA: np.ndarray, p: int) -> List:
     d = int(np.sqrt(len(vec_AA) // p))
     AA = []
@@ -720,36 +682,3 @@ def estimator_to_QQ(V: np.ndarray, R_L: np.ndarray, C: int, W_C: np.ndarray, Adj
         Q.append(np.diag([alphas[l]] * K) + np.hstack(W[l]) @ np.kron(betas[l], np.eye(K)).T)
         l += 1
     return np.array(Q)
-
-def estimator_to_QQ_cp(V, R_L: np.ndarray, C: int, W_C, Adj, K: int):
-    alphas = []
-    betas = []
-    idx = 0
-    L = len(R_L)
-
-    for l in range(L):
-        # extract alpha_l
-        alphas.append(V[idx])
-        idx += 1
-
-        # extract beta_l block
-        n_beta = C * R_L[l]
-        betas.append(cp.reshape(V[idx:idx + n_beta], (n_beta, 1), order='F'))
-        idx += n_beta
-
-    W = [[np.multiply(W_C[c], Adj[stage]) for c in range(C) for stage in range(R_i)] for R_i in R_L]
-    Q = []
-    for l in range(L):
-        alpha_mat = cp.multiply(alphas[l], np.eye(K))
-        kron_beta = cp.kron(betas[l], np.eye(K))
-        Q.append(alpha_mat + cp.hstack(W[l]) @ kron_beta)
-
-    top_blocks = []
-    for i in range(L - 1):
-        row = [np.zeros((K, K)) for _ in range(L)]
-        row[i + 1] = np.eye(K)
-        top_blocks.append(np.hstack(row))
-        # Last row: -A_p, ..., -A_1
-    last_row = [-Q[L - i - 1] for i in range(L)]
-    all_rows = cp.vstack(top_blocks + [cp.hstack(last_row)])
-    return cp.bmat(all_rows)

@@ -212,7 +212,7 @@ class GraphOUEdge:
             with open(os.path.join(self.data_dir, f'grCAR_{jump_regime}_estimates_Cov.npy'), 'wb') as f:
                 np.save(f, estimates_Cov)
 
-    def estimate_unknown_Levy(self, Y, jump_activity: str = 'infinite'):
+    def estimate_unknown_Levy(self, Y, jump_activity: str = 'finite'):
         """Estimate and save the parameters of unknown Levy process."""
 
         n = int(np.ceil((Y.shape[1] - 1) ** (1 / 7)))
