@@ -574,7 +574,7 @@ def OU_edge_model(Y, test_set, K, test_size, forecast_step, R_L, C, jump_activit
         X_OU.alpha_set(theta_hat_OU)
         X_OU.beta_set([[0] * stage * C for stage in R_L])
         try:
-            Q_Q = X_OU.Q_matrix(False)
+            Q_Q = X_OU.Q_matrix()
         except:
             # for l = 1 or 2
             if len(R_L) < 3:
