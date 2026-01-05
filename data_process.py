@@ -5,6 +5,9 @@ import re
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+import cvxpy as cp
+from numpy.linalg import det
+from scipy.optimize import minimize
 from multiprocessing import Pool
 from itertools import combinations
 from datetime import datetime
@@ -30,7 +33,7 @@ def multiprocess_orderbooks(TICKER, input_path, output_path, log_path, check_for
     :param output_path: the path where we wish to save the processed datasets (as .npz files), str
     :param log_path: the path where processing logs are saved, str
     :param check_for_processed_data: check if processed .npz files already exist in output_path and skip these dates for processing, bool
-    :return: saves the aggregated mid quote price in output_path, as .npz files with numpy attributes
+    :return: saves the aggregated mid-quote price in output_path, as .npz files with numpy attributes
              "orderbook_features" (:, 1).
     """
     csv_file_list = glob.glob(os.path.join(input_path, "*.{}".format("csv")))
@@ -96,7 +99,7 @@ def process_orderbook(orderbook_name, TICKER, output_path):
             "ASKp1", "ASKs1", "BIDp1",  "BIDs1" str
     :param TICKER: the TICKER to be considered, str
     :param output_path: the path where we wish to save the processed datasets (as .npz files), str
-    :return: saves the aggregated mid quote price in output_path, as .npz files with numpy attributes
+    :return: saves the aggregated mid-quote price in output_path, as .npz files with numpy attributes
              "orderbook_features" (:, 1).
     """
     print(orderbook_name)
@@ -108,7 +111,7 @@ def process_orderbook(orderbook_name, TICKER, output_path):
     except:
         return orderbook_name + ' skipped. Error: failed to read orderbook.'
 
-    # compute the mid quote price
+    # compute the mid-quote price
     df_orderbook.columns = ["ASKp1", "ASKs1", "BIDp1", "BIDs1"]
     df_orderbook.insert(0, "mid", (df_orderbook["ASKp1"] + df_orderbook["BIDp1"]) / 2)
 
@@ -180,7 +183,7 @@ def process_orderbook(orderbook_name, TICKER, output_path):
     df_orderbook = df_orderbook.loc[(df_orderbook["seconds"] >= market_open_seconds) &
                                     (df_orderbook["seconds"] <= market_close_seconds)]
 
-    # 6. downsample tick-by-tick mid quote price data into 1-second frequency, keeping only the last tick in each second with forward-fill
+    # 6. downsample tick-by-tick mid-quote price data into 1-second frequency, keeping only the last tick in each second with forward-fill
     df_orderbook['timestamp'] = pd.to_datetime(df_orderbook['seconds'], unit='s', origin=pd.Timestamp(date))
     df_orderbook = df_orderbook.set_index('timestamp')
     df_orderbook_sec = df_orderbook.resample('1s').last().ffill()
@@ -213,7 +216,7 @@ def process_day_parallel(arg):
 
 def aggregate_assets(assets, base_dir, out_dir, max_workers_days=None):
     """
-    Aggregate log mid quote price for multiple assets and days using full parallelization.
+    Aggregate log mid-quote price for multiple assets and days using full parallelization.
     - max_workers_days: number of parallel processes for days
     - max_workers_assets: number of parallel processes for assets within a day
     """
@@ -242,24 +245,14 @@ def aggregate_assets(assets, base_dir, out_dir, max_workers_days=None):
 def MRC(Y):
     """
     Compute the Modulated Realized Covariance (MRC) estimator.
-
-    Parameters
-    ----------
-    Y : np.ndarray
-        Log-price series, shape (n, d).
-
-    Returns
-    -------
-    C : np.ndarray
-        Estimated covariance matrix, shape (d, d).
     """
     assets = Y.columns
     Y = np.asarray(Y)
     n, d = Y.shape
     if n == 0:
-        return
+        return None
 
-    N = math.ceil((n - 1) ** .6 * 1)
+    N = math.ceil((n - 1) ** .61 * .5)
     k_n = N if N % 2 == 0 else N + 1
     half = k_n // 2
     m = n - k_n + 1  # number of valid indices i
@@ -311,7 +304,6 @@ def adjacency_matrices(A, n):
     """
     Compute all adjacency matrices up to distance n.
     :param A: binary adjacency matrix (NxN)
-
     :param n: maximum distance
     :return: list of binary matrices [A1, A2, ..., An]
     """
@@ -349,7 +341,6 @@ def edge_weight(adjs):
         result += adj / row_sums
 
     return [result]
-
 
 
 def adj_to_line_graph(adj, TICKERS):
@@ -443,6 +434,55 @@ def log_data_to_cov_data(path: str, rule: str):
 
     return cov_data
 
+def hurwitz_principal_minors(a):
+    #a = [a_1, a_2,..., a_l] length l
+    n = len(a)
+    H = np.zeros((n, n))
+    for i in range(n):
+        for j in range(n):
+            idx = 2 * j - i + 1
+            if 0 < idx <= n:
+                H[i,j] = a[idx - 1]
+            elif idx == 0:
+                H[i,j] = 1   # coefficient of lambda^n (monic) when appears
+            else:
+                H[i,j] = 0
+    # compute leading principal minors Delta_k
+    deltas = [det(H[:k, :k]) for k in range(1, n+1)]
+    return np.array(deltas)
+
+def estimator_to_QQ_cp(V, R_L: np.ndarray, C: int, W_C, Adj, K: int):
+    alphas = []
+    betas = []
+    idx = 0
+    L = len(R_L)
+
+    for l in range(L):
+        # extract alpha_l
+        alphas.append(V[idx])
+        idx += 1
+
+        # extract beta_l block
+        n_beta = C * R_L[l]
+        betas.append(cp.reshape(V[idx:idx + n_beta], (n_beta, 1), order='F'))
+        idx += n_beta
+
+    W = [[np.multiply(W_C[c], Adj[stage]) for c in range(C) for stage in range(R_i)] for R_i in R_L]
+    Q = []
+    for l in range(L):
+        alpha_mat = cp.multiply(alphas[l], np.eye(K))
+        kron_beta = cp.kron(betas[l], np.eye(K))
+        Q.append(alpha_mat + cp.hstack(W[l]) @ kron_beta)
+
+    top_blocks = []
+    for i in range(L - 1):
+        row = [np.zeros((K, K)) for _ in range(L)]
+        row[i + 1] = np.eye(K)
+        top_blocks.append(np.hstack(row))
+        # Last row: -A_p, ..., -A_1
+    last_row = [-Q[L - i - 1] for i in range(L)]
+    all_rows = cp.vstack(top_blocks + [cp.hstack(last_row)])
+    return cp.bmat(all_rows)
 
 def UAR_model(Y, test_set, K, test_size, forecast_step):
     # Univariate AR Edge Model
@@ -551,9 +591,14 @@ def OU_edge_model(Y, test_set, K, test_size, forecast_step, R_L, C, jump_activit
             Q_Q = X_OU.Q_matrix(False)
 
         alphas_OU.append(theta_hat_OU)
+
+        # Use Backward difference
+        flip_window = state_space(np.flip(window_data[:, -len(R_L):], axis=1), len(R_L), P_[-len(R_L):])
+        x0 = flip_window[:, 0] * np.repeat((-1) ** np.arange(len(R_L)), flip_window.shape[0] / len(R_L))
+
+        # Make predictions
         forecast_OU[i, :, :] = np.mean(np.array([simulate_MCAR_compound_poisson([i for i in range(forecast_step + 1)],Q_Q,
-                                        np.append(window_data[:, -1], [0] * K * (len(R_L) - 1)), b_OU, Sigma_OU, 1,
-                                        jump_F_OU, uniform=True)[:, 1:] for _ in range(1000)]), axis=0)
+                                        x0, b_OU, Sigma_OU, 1, jump_F_OU, uniform=True)[:, 1:] for _ in range(100)]), axis=0)
         df_OU = np.append(df_OU, test_set[i, :, 0:1], axis=1)
 
     with open(os.path.join('data\\LOBSTERdata\\output\\train\\aggregate', f'forecast_OU_{len(R_L)}.npy'), 'wb') as f:
@@ -645,10 +690,13 @@ def grOU_edge_model(Y, Adj, test_set, K, test_size, forecast_step, R_L, C, jump_
         alphas.append(alpha_pred)
         betas.append(beta_pred)
 
+        # Use Backward difference
+        flip_window = state_space(np.flip(window_data[:, -len(R_L):], axis=1), len(R_L), P_[-len(R_L):])
+        x0 = flip_window[:, 0] * np.repeat((-1) ** np.arange(len(R_L)), flip_window.shape[0] / len(R_L))
+
         # Make predictions
         forecast_grOU[i, :, :] = np.mean(np.array([simulate_MCAR_compound_poisson([i for i in range(forecast_step + 1)],
-                                        Q_Q, np.append(window_data[:, -1], [0] * K * (len(R_L) - 1)), b, Sigma, 1,
-                                        jump_F, uniform=True)[:, 1:] for _ in range(1000)]), axis=0)
+                                        Q_Q, x0, b, Sigma, 1, jump_F, uniform=True)[:, 1:] for _ in range(100)]), axis=0)
         df_grOU = np.append(df_grOU, test_set[i, :, 0:1], axis=1)
 
     with open(os.path.join('data\\LOBSTERdata\\output\\train\\aggregate', f'forecast_grOU_{len(R_L)}_{R_L}.npy'), 'wb') as f:

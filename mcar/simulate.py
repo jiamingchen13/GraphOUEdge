@@ -200,7 +200,7 @@ def simulate_MCAR_compound_poisson(P, A: np.ndarray, x0: np.ndarray, a: np.ndarr
                 X: MCAR state space simulation (first d entries are Y), (pd, N+1) np.ndarray
             elif output_format = 'SS + jumps':
                 X: MCAR state space simulation (first d entries are Y), (pd, N+1) np.ndarray
-                jump_times: jump times of the p-1 derivative of Y, (T,) np.ndarray
+                jump_times: jump times of the p-1 derivative of Y, (T, ) np.ndarray
                 jump_sizes: jump magnitudes of the p-1 derivative of Y at jump_times, (d, T) np.ndarray
     """
     if rate > 0 and jump_F is None:
