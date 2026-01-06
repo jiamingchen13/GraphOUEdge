@@ -6,7 +6,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import cvxpy as cp
 from numpy.linalg import det
-from scipy.optimize import minimize
+from scipy.optimize import minimize, Bounds, NonlinearConstraint
 from multiprocessing import Pool
 from itertools import combinations
 from datetime import datetime
@@ -483,7 +483,7 @@ def estimator_to_QQ_cp(V, R_L: np.ndarray, C: int, W_C, Adj, K: int):
     all_rows = cp.vstack(top_blocks + [cp.hstack(last_row)])
     return cp.bmat(all_rows)
 
-def UAR_model(Y, test_set, K, test_size, forecast_step):
+def UAR_model(Y, test_set, K, test_size, forecast_step, lag = None):
     # Univariate AR Edge Model
 
     df_AR = np.array(Y.copy())
@@ -499,7 +499,10 @@ def UAR_model(Y, test_set, K, test_size, forecast_step):
     for i in range(test_size):
         for j in range(K):
             window_data = df_AR[j, i:]
-            model = AutoReg(window_data, lags=best_p[j]).fit()
+            if lag is None:
+                model = AutoReg(window_data, lags=best_p[j]).fit()
+            else:
+                model = AutoReg(window_data, lags=lag).fit()
             forecast_AR[i, j, :] = model.predict(start=len(window_data), end=len(window_data) + forecast_step - 1)
         df_AR = np.append(df_AR, test_set[i, :, 0:1], axis=1)
 
@@ -579,13 +582,14 @@ def OU_edge_model(Y, test_set, K, test_size, forecast_step, R_L, C, jump_activit
             # for l = 1 or 2
             if len(R_L) < 3:
                 theta_hat_OU = minimize(lambda x: -np.matmul(x, H) + 0.5 * np.matmul(x, np.matmul(HH, x)), theta_hat_OU,
-                                        constraints=({'type': 'ineq', 'fun': lambda x: x}), method='SLSQP').x
+                                        bounds=[(0.0, None)] * len(theta_hat_OU), method='L-BFGS-B').x
             # for l >= 3
             else:
+                n = len(theta_hat_OU)
+                hurwitz_constraint = NonlinearConstraint(hurwitz_principal_minors, lb=np.full(n, 1e-16), ub=np.full(n, np.inf))
                 theta_hat_OU = minimize(lambda x: -np.matmul(x, H) + 0.5 * np.matmul(x, np.matmul(HH, x)), theta_hat_OU,
-                                        constraints=({'type': 'ineq', 'fun': lambda x: hurwitz_principal_minors(x)},
-                                                     {'type': 'ineq', 'fun': lambda x: x}), method='SLSQP').x
-            theta_hat_OU = np.clip(theta_hat_OU, 1e-16, None)
+                                        bounds=Bounds(lb=np.zeros(n), ub=np.full(n, np.inf), keep_feasible=True),
+                                        constraints=[hurwitz_constraint], method='trust-constr').x
             X_OU.alpha_set(theta_hat_OU)
             X_OU.beta_set([[0] * stage * C for stage in R_L])
             Q_Q = X_OU.Q_matrix(False)
@@ -597,7 +601,7 @@ def OU_edge_model(Y, test_set, K, test_size, forecast_step, R_L, C, jump_activit
         x0 = flip_window[:, 0] * np.repeat((-1) ** np.arange(len(R_L)), flip_window.shape[0] / len(R_L))
 
         # Make predictions
-        forecast_OU[i, :, :] = np.mean(np.array([simulate_MCAR_compound_poisson([i for i in range(forecast_step + 1)],Q_Q,
+        forecast_OU[i, :, :] = np.mean(np.array([simulate_MCAR_compound_poisson([i * P_[1] for i in range(forecast_step + 1)],Q_Q,
                                         x0, b_OU, Sigma_OU, 1, jump_F_OU, uniform=True)[:, 1:] for _ in range(100)]), axis=0)
         df_OU = np.append(df_OU, test_set[i, :, 0:1], axis=1)
 
@@ -695,7 +699,7 @@ def grOU_edge_model(Y, Adj, test_set, K, test_size, forecast_step, R_L, C, jump_
         x0 = flip_window[:, 0] * np.repeat((-1) ** np.arange(len(R_L)), flip_window.shape[0] / len(R_L))
 
         # Make predictions
-        forecast_grOU[i, :, :] = np.mean(np.array([simulate_MCAR_compound_poisson([i for i in range(forecast_step + 1)],
+        forecast_grOU[i, :, :] = np.mean(np.array([simulate_MCAR_compound_poisson([i * P_[1] for i in range(forecast_step + 1)],
                                         Q_Q, x0, b, Sigma, 1, jump_F, uniform=True)[:, 1:] for _ in range(100)]), axis=0)
         df_grOU = np.append(df_grOU, test_set[i, :, 0:1], axis=1)
 
