@@ -490,7 +490,7 @@ def UAR_model(Y, test_set, K, test_size, forecast_step, lag = None):
     aic_values = []
     best_p = np.zeros((K,))
     for i in range(K):
-        for p in range(1, 6):
+        for p in range(1, 7):
             model = AutoReg(df_AR[i, :], lags=p).fit()
             aic_values.append((p, model.aic))
         best_p[i] = min(aic_values, key=lambda x: x[1])[0]
@@ -524,7 +524,7 @@ def VAR_model(Y, test_set, K, test_size, forecast_step):
     model = VAR(df_VAR)
 
     # automatic lag selection by AIC
-    best_lag_var = model.select_order(maxlags=5).aic
+    best_lag_var = model.select_order(maxlags=6).aic
 
     forecast_VAR = np.zeros((test_size, K, forecast_step))
     for i in range(test_size):
@@ -599,7 +599,7 @@ def OU_edge_model(Y, test_set, K, test_size, forecast_step, R_L, C, jump_activit
         # Make predictions
         forecast_OU[i, :, :] = np.mean(np.array([simulate_MCAR_compound_poisson([i * P_[1] for i in range(forecast_step + 1)],
                                         Q_Q, np.append(window_data[:, -1], [0] * K * (len(R_L) - 1)), b_OU, Sigma_OU, 1,
-                                        jump_F_OU, uniform=True)[:, 1:] for _ in range(100)]), axis=0)
+                                        jump_F_OU, uniform=True)[:, 1:] for _ in range(1000)]), axis=0)
         df_OU = np.append(df_OU, test_set[i, :, 0:1], axis=1)
 
     with open(os.path.join('data\\LOBSTERdata\\output\\train\\aggregate', f'forecast_OU_{len(R_L)}.npy'), 'wb') as f:
@@ -633,8 +633,8 @@ def grOU_edge_model(Y, Adj, test_set, K, test_size, forecast_step, R_L, C, jump_
     forecast_grOU = np.zeros((test_size, K, forecast_step))
     df_grOU = np.array(Y.copy())
     jump_F = scipy.stats.multivariate_normal(mean=F_mean, cov=(F_squared - np.outer(F_mean, F_mean)), allow_singular=True)
-    alphas = []
-    betas = []
+    # alphas = []
+    # betas = []
 
     for i in range(test_size):
         window_data = df_grOU[:, i:]
@@ -688,8 +688,8 @@ def grOU_edge_model(Y, Adj, test_set, K, test_size, forecast_step, R_L, C, jump_
             X.beta_set(beta_pred)
             Q_Q = X.Q_matrix(False)
 
-        alphas.append(alpha_pred)
-        betas.append(beta_pred)
+        # alphas.append(alpha_pred)
+        # betas.append(beta_pred)
 
         # flip_window = state_space(np.flip(window_data[:, -len(R_L):], axis=1), len(R_L), P_[-len(R_L):])
         # x0 = flip_window[:, 0] * np.repeat((-1) ** np.arange(len(R_L)), flip_window.shape[0] / len(R_L))
@@ -697,7 +697,7 @@ def grOU_edge_model(Y, Adj, test_set, K, test_size, forecast_step, R_L, C, jump_
         # Make predictions
         forecast_grOU[i, :, :] = np.mean(np.array([simulate_MCAR_compound_poisson([i * P_[1] for i in range(forecast_step + 1)],
                                         Q_Q, np.append(window_data[:, -1], [0] * K * (len(R_L) - 1)), b, Sigma, 1,
-                                        jump_F, uniform=True)[:, 1:] for _ in range(100)]), axis=0)
+                                        jump_F, uniform=True)[:, 1:] for _ in range(1000)]), axis=0)
         df_grOU = np.append(df_grOU, test_set[i, :, 0:1], axis=1)
 
     with open(os.path.join('data\\LOBSTERdata\\output\\train\\aggregate', f'forecast_grOU_{len(R_L)}_{R_L}.npy'), 'wb') as f:
