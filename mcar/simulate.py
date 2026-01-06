@@ -227,7 +227,7 @@ def simulate_MCAR_compound_poisson(P, A: np.ndarray, x0: np.ndarray, a: np.ndarr
         A_inv = np.linalg.pinv(A)
     except:
         # ridge-regularized
-        A_inv = np.linalg.solve(A.T @ A + 1e-9 * np.eye(A.shape[0]), A.T)
+        A_inv = np.linalg.solve(A.T @ A + 1e-16 * np.eye(A.shape[0]), A.T)
     M = np.zeros([2*pd, 2*pd])
     M[:pd, :pd] = A
     M[:pd, pd:] = Sigma_tilde
