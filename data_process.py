@@ -599,7 +599,7 @@ def OU_edge_model(Y, test_set, K, test_size, forecast_step, R_L, C, jump_activit
         # Make predictions
         forecast_OU[i, :, :] = np.mean(np.array([simulate_MCAR_compound_poisson([i * P_[1] for i in range(forecast_step + 1)],
                                         Q_Q, np.append(window_data[:, -1], [0] * K * (len(R_L) - 1)), b_OU, Sigma_OU, 1,
-                                        jump_F_OU, uniform=True)[:, 1:] for _ in range(1000)]), axis=0)
+                                        jump_F_OU, uniform=True)[:, 1:] for _ in range(100)]), axis=0)
         df_OU = np.append(df_OU, test_set[i, :, 0:1], axis=1)
 
     with open(os.path.join('data\\LOBSTERdata\\output\\train\\aggregate', f'forecast_OU_{len(R_L)}.npy'), 'wb') as f:
@@ -697,7 +697,7 @@ def grOU_edge_model(Y, Adj, test_set, K, test_size, forecast_step, R_L, C, jump_
         # Make predictions
         forecast_grOU[i, :, :] = np.mean(np.array([simulate_MCAR_compound_poisson([i * P_[1] for i in range(forecast_step + 1)],
                                         Q_Q, np.append(window_data[:, -1], [0] * K * (len(R_L) - 1)), b, Sigma, 1,
-                                        jump_F, uniform=True)[:, 1:] for _ in range(1000)]), axis=0)
+                                        jump_F, uniform=True)[:, 1:] for _ in range(100)]), axis=0)
         df_grOU = np.append(df_grOU, test_set[i, :, 0:1], axis=1)
 
     with open(os.path.join('data\\LOBSTERdata\\output\\train\\aggregate', f'forecast_grOU_{len(R_L)}_{R_L}.npy'), 'wb') as f:
