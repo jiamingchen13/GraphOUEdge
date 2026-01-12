@@ -83,12 +83,7 @@ def simulate_MCAR_stat_distr_compound_poisson(A: np.ndarray, a: np.ndarray, Sigm
     M[:pd, pd:] = Sigma_tilde
     M[pd:, pd:] = - A.T
     V = scipy.linalg.expm(M*T)[:pd, pd:].dot(scipy.linalg.expm(A*T).T)
-
-    try:
-        A_inv = np.linalg.pinv(A)
-    except:
-        # ridge-regularized
-        A_inv = np.linalg.solve(A.T @ A + 1e-16 * np.eye(A.shape[0]), A.T)
+    A_inv = np.linalg.pinv(A)
 
     a_component = - A_inv.dot(E).dot(a)
     W_component = scipy.stats.multivariate_normal(cov=V, allow_singular=True).rvs(size=1).T
@@ -223,11 +218,8 @@ def simulate_MCAR_compound_poisson(P, A: np.ndarray, x0: np.ndarray, a: np.ndarr
 
     # precompute for speed-up
     eA = scipy.linalg.expm(A)
-    try:
-        A_inv = np.linalg.pinv(A)
-    except:
-        # ridge-regularized
-        A_inv = np.linalg.solve(A.T @ A + 1e-16 * np.eye(A.shape[0]), A.T)
+    A_inv = np.linalg.pinv(A)
+
     M = np.zeros([2*pd, 2*pd])
     M[:pd, :pd] = A
     M[:pd, pd:] = Sigma_tilde
@@ -243,7 +235,14 @@ def simulate_MCAR_compound_poisson(P, A: np.ndarray, x0: np.ndarray, a: np.ndarr
 
         # increment due to W
         V = scipy.linalg.fractional_matrix_power(eM, delta_t).real[:pd, pd:].dot(eAt.T)
-        W_increments = np.atleast_2d(scipy.stats.multivariate_normal(cov=V, allow_singular=True).rvs(size=N-1)).T
+
+        try:
+            W_increments = np.atleast_2d(scipy.stats.multivariate_normal(cov=V, allow_singular=True).rvs(size=N-1)).T
+        except ValueError:
+            eigvals, eigvecs = np.linalg.eigh(V)
+            eigvals = np.maximum(eigvals, 1e-16)
+            V = eigvecs @ np.diag(eigvals) @ eigvecs.T
+            W_increments = np.atleast_2d(scipy.stats.multivariate_normal(cov=V, allow_singular=True).rvs(size=N - 1)).T
 
         if pd == 1:
             W_increments = W_increments.reshape(1, -1)
@@ -277,7 +276,14 @@ def simulate_MCAR_compound_poisson(P, A: np.ndarray, x0: np.ndarray, a: np.ndarr
             M[:pd, pd:] = Sigma_tilde
             M[pd:, pd:] = - A.T
             V = scipy.linalg.fractional_matrix_power(eM, delta_t).real[:pd, pd:].dot(eAt.T)
-            W_increment = scipy.stats.multivariate_normal(cov=V, allow_singular=True).rvs(size=1).T
+
+            try:
+                W_increment = scipy.stats.multivariate_normal(cov=V, allow_singular=True).rvs(size=1).T
+            except ValueError:
+                eigvals, eigvecs = np.linalg.eigh(V)
+                eigvals = np.maximum(eigvals, 1e-16)
+                V = eigvecs @ np.diag(eigvals) @ eigvecs.T
+                W_increment = scipy.stats.multivariate_normal(cov=V, allow_singular=True).rvs(size=1).T
 
             # increment due to jumps
             if rate > 0:
