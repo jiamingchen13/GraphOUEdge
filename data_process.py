@@ -603,7 +603,7 @@ def OU_edge_model(Y, test_set, K, test_size, forecast_step, R_L, C, jump_activit
 
         # Make predictions
         forecast_OU[i, :, :] = np.mean(np.array([simulate_MCAR_compound_poisson([i * P_[1] for i in range(forecast_step + 1)],
-                                        Q_Q, x0, b_OU, Sigma_OU, 1,
+                                        Q_Q, np.append(window_data[:, -1], [0] * K * (len(R_L) - 1)), b_OU, Sigma_OU, 1,
                                         jump_F_OU, uniform=True)[:, 1:] for _ in range(100)]), axis=0)
         df_OU = np.append(df_OU, test_set[i, :, 0:1], axis=1)
 

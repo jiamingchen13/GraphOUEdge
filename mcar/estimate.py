@@ -425,7 +425,7 @@ def estimate_Sigma_L(DeltaL: np.ndarray, Q: np.ndarray, epsilon: float = 0.01, g
             Sigmas.append(Sigma_hat_new)
     return Sigma_hat_new
 
-def estimate_integral_Levy_measure(DeltaL: np.ndarray, Q: np.ndarray, Sigma: np.ndarray = None, epsilon: float = 0.01, gamma: float = 1.01, K: Callable = lambda x: np.linalg.norm(x) > 6e-4, f: Callable = lambda x: x):
+def estimate_integral_Levy_measure(DeltaL: np.ndarray, Q: np.ndarray, Sigma: np.ndarray = None, epsilon: float = 0.01, gamma: float = 1.01, K: Callable = lambda x: np.linalg.norm(x) > 1e-4, f: Callable = lambda x: x):
     """
     Estimate the functional f(F) = \int_K f(z) F(dz) where f: R^d -> R^n of the Levy measure F from (irregularly spaced) Levy increments DeltaL.
     Theoretical guarantees of convergence are given in (Gegler, 2011) for functions of the form f(z) = (z^T A z)^l for matrix A and power l.
