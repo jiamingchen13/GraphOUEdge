@@ -88,7 +88,7 @@ def simulate_MCAR_stat_distr_compound_poisson(A: np.ndarray, a: np.ndarray, Sigm
         A_inv = np.linalg.pinv(A)
     except:
         # ridge-regularized
-        A_inv = np.linalg.solve(A.T @ A + 1e-9 * np.eye(A.shape[0]), A.T)
+        A_inv = np.linalg.solve(A.T @ A + 1e-16 * np.eye(A.shape[0]), A.T)
 
     a_component = - A_inv.dot(E).dot(a)
     W_component = scipy.stats.multivariate_normal(cov=V, allow_singular=True).rvs(size=1).T

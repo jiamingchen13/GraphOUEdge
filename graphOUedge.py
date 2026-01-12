@@ -212,12 +212,8 @@ class GraphOUEdge:
             with open(os.path.join(self.data_dir, f'grCAR_{jump_regime}_estimates_Cov.npy'), 'wb') as f:
                 np.save(f, estimates_Cov)
 
-    def estimate_unknown_Levy(self, Y, jump_activity: str = 'finite'):
+    def estimate_unknown_Levy(self, Y, P_, Q_, jump_activity: str = 'finite'):
         """Estimate and save the parameters of unknown Levy process."""
-
-        n = int(np.ceil((Y.shape[1] - 1) ** (1 / 7)))
-        P_ = np.linspace(0, (Y.shape[1] - 1), Y.shape[1])
-        Q_ = np.append(P_[::n ** 4], P_[-1]) if (Y.shape[1] - 1) % n ** 4 != 0 else P_[::n ** 4]
 
         QQ_hat, (b_hat, Sigma_hat) = estimate_MCAR(Y=Y, p=self.L, P=P_, Q=Q_, A=self.Adj, W_C=self.W_C, R_L=self.R_L, C=self.C, jump_activity=jump_activity)
         theta_hat, KK, K = estimate_grCAR_drift(Y, self.Adj, self.W_C, self.L, self.R_L, self.C, P_, Q_, b_hat, None, Sigma_hat, with_cov=True)
@@ -227,8 +223,8 @@ class GraphOUEdge:
             F_mean_hat = estimate_integral_Levy_measure(DeltaL, Q=Q_, Sigma=Sigma_hat, K=lambda x: True, f=lambda x: x)
             F_squared_hat = estimate_integral_Levy_measure(DeltaL, Q=Q_, Sigma=Sigma_hat, K=lambda x: True, f=lambda x: np.outer(x, x))
         elif jump_activity == 'infinite':
-            F_mean_hat = estimate_integral_Levy_measure(DeltaL, Q=Q_, Sigma=Sigma_hat, K=lambda x: np.linalg.norm(x) > 6e-4, f=lambda x: x)
-            F_squared_hat = estimate_integral_Levy_measure(DeltaL, Q=Q_, Sigma=Sigma_hat, K=lambda x: np.linalg.norm(x) > 6e-4, f=lambda x: np.outer(x, x))
+            F_mean_hat = estimate_integral_Levy_measure(DeltaL, Q=Q_, Sigma=Sigma_hat, K=lambda x: np.linalg.norm(x) > 1e-4, f=lambda x: x)
+            F_squared_hat = estimate_integral_Levy_measure(DeltaL, Q=Q_, Sigma=Sigma_hat, K=lambda x: np.linalg.norm(x) > 1e-4, f=lambda x: np.outer(x, x))
         else:
             raise ValueError("jump_activity must be 'finite' or 'infinite.")
 

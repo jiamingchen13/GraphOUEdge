@@ -562,7 +562,7 @@ def OU_edge_model(Y, test_set, K, test_size, forecast_step, R_L, C, jump_activit
     Adj_L_OU = [np.zeros((K, K)) for _ in range(max(R_L))]
     W_C_OU = edge_weight(Adj_L_OU)
     X_OU = GraphOUEdge(R_L, K, C, Adj_L_OU, W_C_OU, 'data\\LOBSTERdata\\output\\train\\aggregate', 'plots')
-    X_OU.estimate_unknown_Levy(Y, f'{jump_activity}')
+    X_OU.estimate_unknown_Levy(Y, P_, Q_,f'{jump_activity}')
     b_OU = np.load(f'./data/LOBSTERdata/output/train/aggregate/MCAR_estimates_b_{jump_activity}.npy')
     Sigma_OU = np.load(f'./data/LOBSTERdata/output/train/aggregate/MCAR_estimates_Sigma_{jump_activity}.npy')
     F_mean_OU = np.load(f'./data/LOBSTERdata/output/train/aggregate/MCAR_estimates_F_mean_{jump_activity}.npy')
@@ -629,7 +629,7 @@ def grOU_edge_model(Y, Adj, test_set, K, test_size, forecast_step, R_L, C, jump_
     W_C = edge_weight(Adj_L)
 
     X = GraphOUEdge(R_L, K, C, Adj_L, W_C, 'data\\LOBSTERdata\\output\\train\\aggregate', 'plots')
-    aic = X.estimate_unknown_Levy(Y, f'{jump_activity}') * -2 + 2 * (len(R_L) + sum(R_L) * C)
+    aic = X.estimate_unknown_Levy(Y, P_, Q_,f'{jump_activity}') * -2 + 2 * (len(R_L) + sum(R_L) * C)
     b = np.load(f'./data/LOBSTERdata/output/train/aggregate/MCAR_estimates_b_{jump_activity}.npy')
     Sigma = np.load(f'./data/LOBSTERdata/output/train/aggregate/MCAR_estimates_Sigma_{jump_activity}.npy')
     F_mean = np.load(f'./data/LOBSTERdata/output/train/aggregate/MCAR_estimates_F_mean_{jump_activity}.npy')
