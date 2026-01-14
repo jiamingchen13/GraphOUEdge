@@ -476,6 +476,7 @@ def choose_nu(DeltaL: np.ndarray, Q: np.ndarray, epsilon: float = 0.01, gamma: f
     return nu
 
 def estimate_MCAR(
+        Model: str,
         Y: np.ndarray,
         p: int,
         P: np.ndarray,
@@ -532,8 +533,14 @@ def estimate_MCAR(
     """
     d = Y.shape[0]
     b_hat = np.zeros(d) if b is None else b
-    global_AA_hat = estimate_grCAR_drift(Y, A, W_C, p, R_L, C, P, Q, b_hat) if AA is None else AA
-    AA_hat = estimator_to_QQ(global_AA_hat, R_L, C, W_C, A, d)
+    if Model == 'OU':
+        global_AA_hat = estimate_OU_drift(Y, R_L, d, C, P, Q, b_hat) if AA is None else AA
+        AA_hat = [np.diag([x] * d) for x in global_AA_hat]
+    elif Model == 'grOU':
+        global_AA_hat = estimate_grCAR_drift(Y, A, W_C, p, R_L, C, P, Q, b_hat) if AA is None else AA
+        AA_hat = estimator_to_QQ(global_AA_hat, R_L, C, W_C, A, d)
+    else:
+        raise ValueError('Model not recognized')
     DeltaL = recover_BDLP(Y, p, P, Q, AA_hat)
     Sigma_hat = estimate_Sigma_L(DeltaL, Q) if Sigma is None else Sigma
     if mu_estimator == 'Levy_slope':
@@ -545,7 +552,7 @@ def estimate_MCAR(
     if jump_activity == 'finite':
         f_hat = estimate_integral_Levy_measure(DeltaL, Q, Sigma_hat, K = lambda x: True, f= lambda x: x) if f is None else f
     elif jump_activity == 'infinite':
-        f_hat = estimate_integral_Levy_measure(DeltaL, Q, Sigma_hat, K = lambda x: np.linalg.norm(x) > 6e-4, f= lambda x: x) if f is None else f
+        f_hat = estimate_integral_Levy_measure(DeltaL, Q, Sigma_hat, K = lambda x: np.linalg.norm(x) > 1e-4, f= lambda x: x) if f is None else f
     else:
         raise ValueError("jump_activity must be 'finite' or 'infinite.")
     b_hat = mu_hat - f_hat if b is None else b
@@ -559,8 +566,12 @@ def estimate_MCAR(
 
     while not converged:
         n_iter += 1
-        global_AA_hat_new = estimate_grCAR_drift(Y, A, W_C, p, R_L, C, P, Q, b_hat) if AA is None else AA
-        AA_hat_new = estimator_to_QQ(global_AA_hat_new, R_L, C, W_C, A, d)
+        if Model == 'OU':
+            global_AA_hat_new = estimate_OU_drift(Y, R_L, d, C, P, Q, b_hat) if AA is None else AA
+            AA_hat_new = [np.diag([x] * d) for x in global_AA_hat_new]
+        elif Model == 'grOU':
+            global_AA_hat_new = estimate_grCAR_drift(Y, A, W_C, p, R_L, C, P, Q, b_hat) if AA is None else AA
+            AA_hat_new = estimator_to_QQ(global_AA_hat_new, R_L, C, W_C, A, d)
         DeltaL = recover_BDLP(Y, p, P, Q, AA_hat_new)
         Sigma_hat = estimate_Sigma_L(DeltaL, Q) if Sigma is None else Sigma
         if mu_estimator == 'Levy_slope':

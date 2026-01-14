@@ -241,7 +241,7 @@ def aggregate_assets(assets, base_dir, out_dir, max_workers_days=None):
     np.savez(log_price_path, timestamps=log_price_data.index.astype('datetime64[s]'), **{col: log_price_data[col].values for col in log_price_data.columns})
 
 
-def MRC(Y):
+def MRC(Y, theta):
     """
     Compute the Modulated Realized Covariance (MRC) estimator.
     """
@@ -251,7 +251,7 @@ def MRC(Y):
     if n == 0:
         return None
 
-    N = math.ceil((n - 1) ** .61 * 1)
+    N = math.ceil((n - 1) ** .6 * theta)
     k_n = N if N % 2 == 0 else N + 1
     half = k_n // 2
     m = n - k_n + 1  # number of valid indices i
@@ -410,7 +410,7 @@ def line_graph(cov_data, TICKERS, corr_thres = 0.25, ratio_thres = 0.1):
     return [B, edges_]
 
 
-def log_data_to_cov_data(path: str, rule: str):
+def log_data_to_cov_data(path: str, rule: str, theta: float):
     # Load empirical data
     data = np.load(path + 'log_price.npz')
     index = pd.to_datetime(data["timestamps"])
@@ -422,7 +422,7 @@ def log_data_to_cov_data(path: str, rule: str):
     out = {}
 
     for timestamp, group in log_price_data.resample(rule):
-        res = MRC(group)
+        res = MRC(group, theta)
         if res is None:
             continue
         out[timestamp] = res
@@ -562,7 +562,7 @@ def OU_edge_model(Y, test_set, K, test_size, forecast_step, R_L, C, jump_activit
     Adj_L_OU = [np.zeros((K, K)) for _ in range(max(R_L))]
     W_C_OU = edge_weight(Adj_L_OU)
     X_OU = GraphOUEdge(R_L, K, C, Adj_L_OU, W_C_OU, 'data\\LOBSTERdata\\output\\train\\aggregate', 'plots')
-    X_OU.estimate_unknown_Levy(Y, P_, Q_,f'{jump_activity}')
+    X_OU.estimate_unknown_Levy(Y, P_, Q_, 'OU',f'{jump_activity}')
     b_OU = np.load(f'./data/LOBSTERdata/output/train/aggregate/MCAR_estimates_b_{jump_activity}.npy')
     Sigma_OU = np.load(f'./data/LOBSTERdata/output/train/aggregate/MCAR_estimates_Sigma_{jump_activity}.npy')
     F_mean_OU = np.load(f'./data/LOBSTERdata/output/train/aggregate/MCAR_estimates_F_mean_{jump_activity}.npy')
@@ -603,8 +603,8 @@ def OU_edge_model(Y, test_set, K, test_size, forecast_step, R_L, C, jump_activit
 
         # Make predictions
         forecast_OU[i, :, :] = np.mean(np.array([simulate_MCAR_compound_poisson([i * P_[1] for i in range(forecast_step + 1)],
-                                        Q_Q, np.append(window_data[:, -1], [0] * K * (len(R_L) - 1)), b_OU, Sigma_OU, 1,
-                                        jump_F_OU, uniform=True)[:, 1:] for _ in range(100)]), axis=0)
+                                        Q_Q, np.append(window_data[:, -1], [0] * K * (len(R_L) - 1)), b_OU, Sigma_OU, 1.0,
+                                        jump_F_OU, uniform=True)[:, 1:] for _ in range(1000)]), axis=0)
         df_OU = np.append(df_OU, test_set[i, :, 0:1], axis=1)
 
     with open(os.path.join('data\\LOBSTERdata\\output\\train\\aggregate', f'forecast_OU_{len(R_L)}.npy'), 'wb') as f:
@@ -629,7 +629,7 @@ def grOU_edge_model(Y, Adj, test_set, K, test_size, forecast_step, R_L, C, jump_
     W_C = edge_weight(Adj_L)
 
     X = GraphOUEdge(R_L, K, C, Adj_L, W_C, 'data\\LOBSTERdata\\output\\train\\aggregate', 'plots')
-    aic = X.estimate_unknown_Levy(Y, P_, Q_,f'{jump_activity}') * -2 + 2 * (len(R_L) + sum(R_L) * C)
+    aic = X.estimate_unknown_Levy(Y, P_, Q_, 'grOU',f'{jump_activity}') * -2 + 2 * (len(R_L) + sum(R_L) * C)
     b = np.load(f'./data/LOBSTERdata/output/train/aggregate/MCAR_estimates_b_{jump_activity}.npy')
     Sigma = np.load(f'./data/LOBSTERdata/output/train/aggregate/MCAR_estimates_Sigma_{jump_activity}.npy')
     F_mean = np.load(f'./data/LOBSTERdata/output/train/aggregate/MCAR_estimates_F_mean_{jump_activity}.npy')
@@ -701,7 +701,7 @@ def grOU_edge_model(Y, Adj, test_set, K, test_size, forecast_step, R_L, C, jump_
 
         # Make predictions
         forecast_grOU[i, :, :] = np.mean(np.array([simulate_MCAR_compound_poisson([i * P_[1] for i in range(forecast_step + 1)],
-                                        Q_Q, x0, b, Sigma, 1,
+                                        Q_Q, np.append(window_data[:, -1], [0] * K * (len(R_L) - 1)), b, Sigma, 1.0,
                                         jump_F, uniform=True)[:, 1:] for _ in range(100)]), axis=0)
         df_grOU = np.append(df_grOU, test_set[i, :, 0:1], axis=1)
 

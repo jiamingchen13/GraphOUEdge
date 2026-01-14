@@ -212,11 +212,16 @@ class GraphOUEdge:
             with open(os.path.join(self.data_dir, f'grCAR_{jump_regime}_estimates_Cov.npy'), 'wb') as f:
                 np.save(f, estimates_Cov)
 
-    def estimate_unknown_Levy(self, Y, P_, Q_, jump_activity: str = 'finite'):
+    def estimate_unknown_Levy(self, Y, P_, Q_, model, jump_activity: str = 'finite'):
         """Estimate and save the parameters of unknown Levy process."""
 
-        QQ_hat, (b_hat, Sigma_hat) = estimate_MCAR(Y=Y, p=self.L, P=P_, Q=Q_, A=self.Adj, W_C=self.W_C, R_L=self.R_L, C=self.C, jump_activity=jump_activity)
-        theta_hat, KK, K = estimate_grCAR_drift(Y, self.Adj, self.W_C, self.L, self.R_L, self.C, P_, Q_, b_hat, None, Sigma_hat, with_cov=True)
+        QQ_hat, (b_hat, Sigma_hat) = estimate_MCAR(Model = model, Y=Y, p=self.L, P=P_, Q=Q_, A=self.Adj, W_C=self.W_C, R_L=self.R_L, C=self.C, jump_activity=jump_activity)
+        if model == 'OU':
+            theta_hat, KK, K = estimate_OU_drift(Y, self.R_L, self.K, self.C, P_, Q_, b_hat, None, Sigma_hat, with_cov=True)
+        elif model == 'grOU':
+            theta_hat, KK, K = estimate_grCAR_drift(Y, self.Adj, self.W_C, self.L, self.R_L, self.C, P_, Q_, b_hat, None, Sigma_hat, with_cov=True)
+        else:
+            raise ValueError('Model not recognized')
         DeltaL = recover_BDLP(Y=Y, p=self.L, P=P_, Q=Q_, AA=QQ_hat)
 
         if jump_activity == 'finite':
