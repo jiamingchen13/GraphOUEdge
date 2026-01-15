@@ -242,7 +242,7 @@ def aggregate_assets(assets, base_dir, out_dir, max_workers_days=None):
     np.savez(log_price_path, timestamps=log_price_data.index.astype('datetime64[s]'), **{col: log_price_data[col].values for col in log_price_data.columns})
 
 
-def MRC(Y, theta):
+def MRC(Y):
     """
     Compute the Modulated Realized Covariance (MRC) estimator.
     """
@@ -252,7 +252,7 @@ def MRC(Y, theta):
     if n == 0:
         return None
 
-    N = math.ceil((n - 1) ** .6 * theta)
+    N = math.ceil((n - 1) ** .61 * 1)
     k_n = N if N % 2 == 0 else N + 1
     half = k_n // 2
     m = n - k_n + 1  # number of valid indices i
@@ -411,7 +411,7 @@ def line_graph(cov_data, TICKERS, corr_thres = 0.25, ratio_thres = 0.1):
     return [B, edges_]
 
 
-def log_data_to_cov_data(path: str, rule: str, theta: float):
+def log_data_to_cov_data(path: str, rule: str):
     # Load empirical data
     data = np.load(path + 'log_price.npz')
     index = pd.to_datetime(data["timestamps"])
@@ -423,7 +423,7 @@ def log_data_to_cov_data(path: str, rule: str, theta: float):
     out = {}
 
     for timestamp, group in log_price_data.resample(rule):
-        res = MRC(group, theta)
+        res = MRC(group)
         if res is None:
             continue
         out[timestamp] = res
@@ -433,6 +433,7 @@ def log_data_to_cov_data(path: str, rule: str, theta: float):
              **{col: cov_data[col].values for col in cov_data.columns})
 
     return cov_data
+
 
 def hurwitz_principal_minors(a):
     #a = [a_1, a_2,..., a_l] length l
@@ -450,6 +451,7 @@ def hurwitz_principal_minors(a):
     # compute leading principal minors Delta_k
     deltas = [det(H[:k, :k]) for k in range(1, n+1)]
     return np.array(deltas)
+
 
 def estimator_to_QQ_cp(V, R_L: np.ndarray, C: int, W_C, Adj, K: int):
     alphas = []
@@ -484,6 +486,7 @@ def estimator_to_QQ_cp(V, R_L: np.ndarray, C: int, W_C, Adj, K: int):
     all_rows = cp.vstack(top_blocks + [cp.hstack(last_row)])
     return cp.bmat(all_rows)
 
+
 def UAR_model(Y, test_set, K, test_size, forecast_step, lag = None):
     # Univariate AR Edge Model
 
@@ -517,6 +520,7 @@ def UAR_model(Y, test_set, K, test_size, forecast_step, lag = None):
     forecast_AR_dir = np.sign(np.diff(np.append(last_, forecast_AR, axis=2), axis=2))
     test_set_dir = np.sign(np.diff(np.append(last_, test_set, axis=2), axis=2))
     print(f'Direction success rate for UAR Edge model is: {(test_set_dir == forecast_AR_dir).mean()}')
+
 
 def VAR_model(Y, test_set, K, test_size, forecast_step):
     # VAR Edge Model
@@ -716,9 +720,24 @@ def grOU_edge_model(Y, Adj, test_set, K, test_size, forecast_step, R_L, C, jump_
         x0 = flip_window[:, 0] * np.repeat((-1) ** np.arange(len(R_L)), flip_window.shape[0] / len(R_L))
 
         # Make predictions
-        forecast_grOU[i, :, :] = np.mean(np.array([simulate_MCAR_compound_poisson([i * P_[1] for i in range(forecast_step + 1)],
-                                        Q_Q, np.append(window_data[:, -1], [0] * K * (len(R_L) - 1)), b, Sigma, 1.0,
-                                        jump_F, uniform=True)[:, 1:] for _ in range(100)]), axis=0)
+        def run_single_simulation():
+            """Wrapper function for single simulation"""
+            return simulate_MCAR_compound_poisson(
+                [i * P_[1] for i in range(forecast_step + 1)],
+                Q_Q,
+                np.append(window_data[:, -1], [0] * K * (len(R_L) - 1)),
+                b,
+                Sigma,
+                1.0,
+                jump_F,
+                uniform=True
+            )[:, 1:]
+
+        paths = Parallel(n_jobs=-1)(
+            delayed(run_single_simulation)() for _ in range(1000)
+        )
+
+        forecast_grOU[i, :, :] = np.mean(np.array(paths), axis=0)
         df_grOU = np.append(df_grOU, test_set[i, :, 0:1], axis=1)
 
     with open(os.path.join('data\\LOBSTERdata\\output\\train\\aggregate', f'forecast_grOU_{len(R_L)}_{R_L}.npy'), 'wb') as f:

@@ -513,6 +513,7 @@ def estimate_MCAR(
             - for f_hat use Sigma_hat and thresholding as in (Gegler, 2011).
         4. Iterate 2. and 3. until convergence criterion is met.
 
+    :param Model: Can either be OU or grOU
     :param Y: MCAR process observation, (d, N+1) np.ndarray
     :param p: MCAR parameter, int
     :param P: finer partition over which we observe the MCAR process [0 = s_0, ..., s_N = t], (N+1, ) np.ndarray
