@@ -487,7 +487,25 @@ def estimator_to_QQ_cp(V, R_L: np.ndarray, C: int, W_C, Adj, K: int):
     return cp.bmat(all_rows)
 
 
-def kalman_filter_mcar(Y, A, Sigma, P_):
+def restrict_to_Q(Y, P, Q):
+    """
+    Restrict MCAR observations on P to those on Q (assuming Q ⊆ P).
+    Y: (d, Np+1)
+    P: (Np+1, )
+    Q: (Nq+1, )
+    Returns Y_Q: (d, Nq+1)
+    """
+    indices = [False] * len(P)
+    j = 0
+    for i, s in enumerate(P):
+        if s == Q[j]:
+            indices[i] = True
+            j += 1
+    Y_Q = Y[:, indices]  # same shape (d, M+1) if Q has length M+1
+    return Y_Q
+
+
+def kalman_filter_mcar(Y, A, Sigma, P_, Q_, AA_hat, gamma):
     """
     Y: (d, N+1) observations at time grid
     A: (pd, pd) MCAR matrix
@@ -496,8 +514,13 @@ def kalman_filter_mcar(Y, A, Sigma, P_):
 
     Returns m_filtered, P_filtered: lists of length n+1
     """
-    d, n = Y.shape[0], Y.shape[1] - 1
+    d= Y.shape[0]
     pd = A.shape[0]
+    p = int(pd / d)
+
+    DeltaL_Q = recover_BDLP(Y, p, P_, Q_, AA_hat)
+    DeltaW, DeltaQ_W = disentangle_BM(DeltaL_Q, Q_, Sigma, gamma)
+    W_ = np.cumsum(DeltaW, axis=1)
 
     # Build Sigma_tilde = E Sigma E^T, with E[-d:,:] = I_d
     E = np.zeros((pd, d))
@@ -508,11 +531,6 @@ def kalman_filter_mcar(Y, A, Sigma, P_):
     M[:pd, :pd] = A
     M[:pd, pd:] = Sigma_tilde
     M[pd:, pd:] = -A.T
-
-    delta_t = P_[1] - P_[0]
-    expM = scipy.linalg.expm(M * delta_t)
-    F_k = scipy.linalg.expm(A * delta_t)
-    Q_k = expM[:pd, pd:] @ F_k.T
     H = np.zeros((d, pd))
     H[:, :d] = np.eye(d)
 
@@ -521,14 +539,17 @@ def kalman_filter_mcar(Y, A, Sigma, P_):
     P = np.eye(pd)
     m_filtered = [m.copy()]
 
-    for k in range(n):
+    for k in range(len(DeltaQ_W)):
+        expM = scipy.linalg.expm(M * DeltaQ_W[k])
+        F_k = scipy.linalg.expm(A * DeltaQ_W[k])
+        Q_k = expM[:pd, pd:] @ F_k.T
+
         # 1) Prediction
         m_pred = F_k @ m
         P_pred = F_k @ P @ F_k.T + Q_k
 
         # 2) Update
-        y_k1 = Y[:, k+1]
-        v = y_k1 - H @ m_pred
+        v = W_[:, k] - H @ m_pred
         S = H @ P_pred @ H.T
         K = P_pred @ H.T @ np.linalg.pinv(S)
 
@@ -654,24 +675,29 @@ def OU_edge_model(Y, test_set, K, test_size, forecast_step, R_L, C, jump_activit
 
         # alphas_OU.append(theta_hat_OU)
 
+        if len(R_L) == 1:
+            x0 = window_data[:, -1]
+        else:
+
         # Backward - differences
-        flip_window = state_space(np.flip(window_data[:, -len(R_L):], axis=1), len(R_L), P_[-len(R_L):])
+        #flip_window = state_space(np.flip(window_data[:, -len(R_L):], axis=1), len(R_L), P_[-len(R_L):])
         #x0 = flip_window[:, 0] * np.repeat((-1) ** np.arange(len(R_L)), flip_window.shape[0] / len(R_L))
-        print(flip_window[:, 0] * np.repeat((-1) ** np.arange(len(R_L)), flip_window.shape[0] / len(R_L)))
 
         # Naive initialization
         # np.append(window_data[:, -1], [0] * K * (len(R_L) - 1))
-        print(np.append(window_data[:, -1], [0] * K * (len(R_L) - 1)))
+
 
         # Kalman - filter
-        x0 = kalman_filter_mcar(Y, Q_Q, Sigma_OU, P_)
-        print(x0)
+            AA_hat = [np.diag([x] * K) for x in theta_hat_OU]
+            x0 = kalman_filter_mcar(window_data, Q_Q, Sigma_OU, P_, Q_, AA_hat, 1.01)
+            x0[:K] = window_data[:, -1]
+
 
         # Make predictions
         def run_single_simulation():
             """Wrapper function for single simulation"""
             return simulate_MCAR_compound_poisson(
-                [i * P_[1] for i in range(forecast_step + 1)],
+                [j * P_[1] for j in range(forecast_step + 1)],
                 Q_Q,
                 x0,
                 b_OU,
