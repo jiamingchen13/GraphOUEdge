@@ -486,26 +486,59 @@ def estimator_to_QQ_cp(V, R_L: np.ndarray, C: int, W_C, Adj, K: int):
     all_rows = cp.vstack(top_blocks + [cp.hstack(last_row)])
     return cp.bmat(all_rows)
 
-
-def restrict_to_Q(Y, P, Q):
+def kalman_filter_mcar(Y, A, Sigma, P_):
     """
-    Restrict MCAR observations on P to those on Q (assuming Q ⊆ P).
-    Y: (d, Np+1)
-    P: (Np+1, )
-    Q: (Nq+1, )
-    Returns Y_Q: (d, Nq+1)
+    Y: (d, N+1) observations at time grid
+    A: (pd, pd) MCAR matrix
+    Sigma: (d, d) Brownian covariance of Levy process
+    P_: (N+1, ) observation times
+
+    Returns m_filtered, P_filtered: lists of length n+1
     """
-    indices = [False] * len(P)
-    j = 0
-    for i, s in enumerate(P):
-        if s == Q[j]:
-            indices[i] = True
-            j += 1
-    Y_Q = Y[:, indices]  # same shape (d, M+1) if Q has length M+1
-    return Y_Q
+    d, n = Y.shape[0], Y.shape[1] - 1
+    pd = A.shape[0]
+
+    # Build Sigma_tilde = E Sigma E^T, with E[-d:,:] = I_d
+    E = np.zeros((pd, d))
+    E[-d:, :] = np.eye(d)
+    Sigma_tilde = E @ Sigma @ E.T
+
+    M = np.zeros((2 * pd, 2 * pd))
+    M[:pd, :pd] = A
+    M[:pd, pd:] = Sigma_tilde
+    M[pd:, pd:] = -A.T
+    H = np.zeros((d, pd))
+    H[:, :d] = np.eye(d)
+
+    delta = P_[1] - P_[0]
+    expM = scipy.linalg.expm(M * delta)
+    F_k = scipy.linalg.expm(A * delta)
+    Q_k = expM[:pd, pd:] @ F_k.T
+
+    # Initial prior
+    m = np.zeros(pd)
+    P = np.eye(pd)
+    m_filtered = [m.copy()]
+
+    for k in range(n):
+        # 1) Prediction
+        m_pred = F_k @ m
+        P_pred = F_k @ P @ F_k.T + Q_k
+
+        # 2) Update
+        v = Y[:, k + 1] - H @ m_pred
+        S = H @ P_pred @ H.T
+        K = P_pred @ H.T @ np.linalg.pinv(S)
+
+        m = m_pred + K @ v
+        P = P_pred - K @ S @ K.T
+
+        m_filtered.append(m.copy())
+
+    return m_filtered[-1]
 
 
-def kalman_filter_mcar(Y, A, Sigma, P_, Q_, AA_hat, gamma):
+def kalman_filter_mcar_BM(Y, A, Sigma, P_, Q_, AA_hat, gamma):
     """
     Y: (d, N+1) observations at time grid
     A: (pd, pd) MCAR matrix
@@ -688,8 +721,8 @@ def OU_edge_model(Y, test_set, K, test_size, forecast_step, R_L, C, jump_activit
 
 
         # Kalman - filter
-            AA_hat = [np.diag([x] * K) for x in theta_hat_OU]
-            x0 = kalman_filter_mcar(window_data, Q_Q, Sigma_OU, P_, Q_, AA_hat, 1.01)
+            #AA_hat = [np.diag([x] * K) for x in theta_hat_OU]
+            x0 = kalman_filter_mcar(window_data[:, -10:], Q_Q, Sigma_OU, P_[-10:])
             x0[:K] = window_data[:, -1]
 
 
