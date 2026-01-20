@@ -716,15 +716,15 @@ def OU_edge_model(Y, test_set, K, test_size, forecast_step, R_L, C, jump_activit
             #x0 = flip_window[:, 0] * np.repeat((-1) ** np.arange(len(R_L)), flip_window.shape[0] / len(R_L))
 
         # Naive initialization
-            x0 =np.append(window_data[:, -1], [0] * K * (len(R_L) - 1))
+            #x0 =np.append(window_data[:, -1], [0] * K * (len(R_L) - 1))
 
         # Kalman - filter
             #x0 = kalman_filter_mcar(window_data[:, -6:], Q_Q, Sigma_OU, P_[-6:])
             #x0[:K] = window_data[:, -1]
 
-            #AA_hat = [np.diag([x] * K) for x in theta_hat_OU]
-            #x0 = kalman_filter_mcar_BM(window_data, Q_Q, Sigma_OU, P_, Q_, AA_hat, 1.01)
-            #x0[:K] = window_data[:, -1]
+            AA_hat = [np.diag([x] * K) for x in theta_hat_OU]
+            x0 = kalman_filter_mcar_BM(window_data, Q_Q, Sigma_OU, P_, Q_, AA_hat, 1.01)
+            x0[:K] = window_data[:, -1]
 
         # Make predictions
         def run_single_simulation():
@@ -741,7 +741,7 @@ def OU_edge_model(Y, test_set, K, test_size, forecast_step, R_L, C, jump_activit
             )[:, 1:]
 
         paths = Parallel(n_jobs=-1)(
-            delayed(run_single_simulation)() for _ in range(1000)
+            delayed(run_single_simulation)() for _ in range(500)
         )
 
         forecast_OU[i, :, :] = np.mean(np.array(paths), axis=0)
