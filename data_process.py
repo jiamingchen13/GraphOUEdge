@@ -432,8 +432,6 @@ def log_data_to_cov_data(path: str, rule: str):
     np.savez(path + 'cov.npz', timestamps=cov_data.index.astype('datetime64[s]'),
              **{col: cov_data[col].values for col in cov_data.columns})
 
-    return cov_data
-
 
 def hurwitz_principal_minors(a):
     #a = [a_1, a_2,..., a_l] length l
@@ -553,7 +551,8 @@ def kalman_filter_mcar_BM(Y, A, Sigma, P_, Q_, AA_hat, gamma):
 
     DeltaL_Q = recover_BDLP(Y, p, P_, Q_, AA_hat)
     DeltaW, DeltaQ_W = disentangle_BM(DeltaL_Q, Q_, Sigma, gamma)
-    W_ = np.cumsum(DeltaW, axis=1)
+    Q_index = np.searchsorted(Q_, np.cumsum(DeltaQ_W), side="left")
+    Y_Q = Y[:, Q_index]
 
     # Build Sigma_tilde = E Sigma E^T, with E[-d:,:] = I_d
     E = np.zeros((pd, d))
@@ -582,7 +581,7 @@ def kalman_filter_mcar_BM(Y, A, Sigma, P_, Q_, AA_hat, gamma):
         P_pred = F_k @ P @ F_k.T + Q_k
 
         # 2) Update
-        v = W_[:, k] - H @ m_pred
+        v = Y_Q[:, k] - H @ m_pred
         S = H @ P_pred @ H.T
         K = P_pred @ H.T @ np.linalg.pinv(S)
 
@@ -713,18 +712,19 @@ def OU_edge_model(Y, test_set, K, test_size, forecast_step, R_L, C, jump_activit
         else:
 
         # Backward - differences
-        #flip_window = state_space(np.flip(window_data[:, -len(R_L):], axis=1), len(R_L), P_[-len(R_L):])
-        #x0 = flip_window[:, 0] * np.repeat((-1) ** np.arange(len(R_L)), flip_window.shape[0] / len(R_L))
+            #flip_window = state_space(np.flip(window_data[:, -len(R_L):], axis=1), len(R_L), P_[-len(R_L):])
+            #x0 = flip_window[:, 0] * np.repeat((-1) ** np.arange(len(R_L)), flip_window.shape[0] / len(R_L))
 
         # Naive initialization
-        # np.append(window_data[:, -1], [0] * K * (len(R_L) - 1))
-
+            x0 =np.append(window_data[:, -1], [0] * K * (len(R_L) - 1))
 
         # Kalman - filter
-            #AA_hat = [np.diag([x] * K) for x in theta_hat_OU]
-            x0 = kalman_filter_mcar(window_data[:, -10:], Q_Q, Sigma_OU, P_[-10:])
-            x0[:K] = window_data[:, -1]
+            #x0 = kalman_filter_mcar(window_data[:, -6:], Q_Q, Sigma_OU, P_[-6:])
+            #x0[:K] = window_data[:, -1]
 
+            #AA_hat = [np.diag([x] * K) for x in theta_hat_OU]
+            #x0 = kalman_filter_mcar_BM(window_data, Q_Q, Sigma_OU, P_, Q_, AA_hat, 1.01)
+            #x0[:K] = window_data[:, -1]
 
         # Make predictions
         def run_single_simulation():
