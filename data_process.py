@@ -242,7 +242,7 @@ def aggregate_assets(assets, base_dir, out_dir, max_workers_days=None):
     np.savez(log_price_path, timestamps=log_price_data.index.astype('datetime64[s]'), **{col: log_price_data[col].values for col in log_price_data.columns})
 
 
-def MRC(Y):
+def MRC(Y, delta, theta):
     """
     Compute the Modulated Realized Covariance (MRC) estimator.
     """
@@ -252,7 +252,7 @@ def MRC(Y):
     if n == 0:
         return None
 
-    N = math.ceil((n - 1) ** .61 * 1)
+    N = math.ceil((n - 1) ** delta * theta)
     k_n = N if N % 2 == 0 else N + 1
     half = k_n // 2
     m = n - k_n + 1  # number of valid indices i
@@ -411,7 +411,7 @@ def line_graph(cov_data, TICKERS, corr_thres = 0.25, ratio_thres = 0.1):
     return [B, edges_]
 
 
-def log_data_to_cov_data(path: str, rule: str):
+def log_data_to_cov_data(path: str, rule: str, delta = .6, theta = 1):
     # Load empirical data
     data = np.load(path + 'log_price.npz')
     index = pd.to_datetime(data["timestamps"])
@@ -423,7 +423,7 @@ def log_data_to_cov_data(path: str, rule: str):
     out = {}
 
     for timestamp, group in log_price_data.resample(rule):
-        res = MRC(group)
+        res = MRC(group, delta, theta)
         if res is None:
             continue
         out[timestamp] = res
@@ -730,7 +730,7 @@ def OU_edge_model(Y, test_set, K, test_size, forecast_step, R_L, C, jump_activit
         def run_single_simulation():
             """Wrapper function for single simulation"""
             return simulate_MCAR_compound_poisson(
-                [j * P_[1] for j in range(forecast_step + 1)],
+                [j * (P_[1] - P_[0]) for j in range(forecast_step + 1)],
                 Q_Q,
                 x0,
                 b_OU,
@@ -843,7 +843,7 @@ def grOU_edge_model(Y, Adj, test_set, K, test_size, forecast_step, R_L, C, jump_
         def run_single_simulation():
             """Wrapper function for single simulation"""
             return simulate_MCAR_compound_poisson(
-                [i * P_[1] for i in range(forecast_step + 1)],
+                [i * (P_[1] - P_[0]) for i in range(forecast_step + 1)],
                 Q_Q,
                 np.append(window_data[:, -1], [0] * K * (len(R_L) - 1)),
                 b,
