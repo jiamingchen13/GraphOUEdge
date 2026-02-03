@@ -183,7 +183,7 @@ def process_orderbook(orderbook_name, TICKER, output_path):
     df_orderbook = df_orderbook.loc[(df_orderbook["seconds"] >= market_open_seconds) &
                                     (df_orderbook["seconds"] <= market_close_seconds)]
 
-    # 6. downsample tick-by-tick mid-quote price data into 1-second frequency, keeping only the last tick in each second with forward-fill
+    # 6. downsample tick-by-tick mid-quote price data into 1-second sampling, keeping only the last tick in each second with forward-fill
     df_orderbook['timestamp'] = pd.to_datetime(df_orderbook['seconds'], unit='s', origin=pd.Timestamp(date))
     df_orderbook = df_orderbook.set_index('timestamp')
     df_orderbook_sec = df_orderbook.resample('1s').last().ffill()
