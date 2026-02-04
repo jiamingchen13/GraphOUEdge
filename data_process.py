@@ -759,7 +759,7 @@ def OU_edge_model(Y, test_set, K, test_size, forecast_step, R_L, C, jump_activit
     print(f'Direction success rate for OU({len(R_L)}) Edge model is: {(test_set_dir == forecast_OU_dir).mean()}')
 
 
-def grOU_edge_model(Y, Adj, test_set, K, test_size, forecast_step, R_L, C, jump_activity, P_, Q_):
+def grOU_edge_model(Y, Adj, test_set, K, test_size, forecast_step, R_L, C, jump_activity, P_, Q_, method):
     # graph OU Edge model
 
     # Derive the adjacency matrix for edge graph
@@ -769,7 +769,7 @@ def grOU_edge_model(Y, Adj, test_set, K, test_size, forecast_step, R_L, C, jump_
     W_C = edge_weight(Adj_L)
 
     X = GraphOUEdge(R_L, K, C, Adj_L, W_C, 'data\\LOBSTERdata\\output\\train\\aggregate', 'plots')
-    aic = X.estimate_unknown_Levy(Y, P_, Q_, 'grOU',f'{jump_activity}') * -2 + 2 * (len(R_L) + sum(R_L) * C)
+    X.estimate_unknown_Levy(Y, P_, Q_, 'grOU',f'{jump_activity}')
     b = np.load(f'./data/LOBSTERdata/output/train/aggregate/MCAR_estimates_b_{jump_activity}.npy')
     Sigma = np.load(f'./data/LOBSTERdata/output/train/aggregate/MCAR_estimates_Sigma_{jump_activity}.npy')
     F_mean = np.load(f'./data/LOBSTERdata/output/train/aggregate/MCAR_estimates_F_mean_{jump_activity}.npy')
@@ -836,8 +836,24 @@ def grOU_edge_model(Y, Adj, test_set, K, test_size, forecast_step, R_L, C, jump_
         # alphas.append(alpha_pred)
         # betas.append(beta_pred)
 
-        flip_window = state_space(np.flip(window_data[:, -len(R_L):], axis=1), len(R_L), P_[-len(R_L):])
-        x0 = flip_window[:, 0] * np.repeat((-1) ** np.arange(len(R_L)), flip_window.shape[0] / len(R_L))
+        if len(R_L) == 1:
+            x0 = window_data[:, -1]
+        else:
+            if method == 'backward':
+                # Backward - differences
+                flip_window = state_space(np.flip(window_data[:, -len(R_L):], axis=1), len(R_L), P_[-len(R_L):])
+                x0 = flip_window[:, 0] * np.repeat((-1) ** np.arange(len(R_L)), flip_window.shape[0] / len(R_L))
+            elif method == 'naive':
+                # Naive initialization
+                x0 =np.append(window_data[:, -1], [0] * K * (len(R_L) - 1))
+            elif method == 'kalman':
+                # Kalman - filter
+                AA_hat = estimator_to_QQ(theta_hat, R_L, C, W_C, Adj_L, K)
+                x0 = kalman_filter_mcar_BM(window_data, Q_Q, Sigma, P_, Q_, AA_hat, 1.01)
+                x0[:K] = window_data[:, -1]
+            else:
+                raise NotImplementedError("method must be among 'backward', 'naive' or 'kalman'.")
+
 
         # Make predictions
         def run_single_simulation():
@@ -845,7 +861,7 @@ def grOU_edge_model(Y, Adj, test_set, K, test_size, forecast_step, R_L, C, jump_
             return simulate_MCAR_compound_poisson(
                 [i * (P_[1] - P_[0]) for i in range(forecast_step + 1)],
                 Q_Q,
-                np.append(window_data[:, -1], [0] * K * (len(R_L) - 1)),
+                x0,
                 b,
                 Sigma,
                 1.0,

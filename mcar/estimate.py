@@ -671,7 +671,7 @@ def inv_vectorize_AA(vec_AA: np.ndarray, p: int) -> List:
         AA.append(vec_AA[i*d**2:(i+1)*d**2].reshape((d, d)).T)
     return AA
 
-def estimator_to_QQ(V: np.ndarray, R_L: np.ndarray, C: int, W_C: np.ndarray, Adj: np.ndarray, K: int) -> np.ndarray:
+def estimator_to_QQ(V: np.ndarray, R_L: np.ndarray, C: int, W_C, Adj, K: int) -> np.ndarray:
     alphas = []
     betas = []
     idx = 0
