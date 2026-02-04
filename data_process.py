@@ -741,7 +741,7 @@ def OU_edge_model(Y, test_set, K, test_size, forecast_step, R_L, C, jump_activit
             )[:, 1:]
 
         paths = Parallel(n_jobs=-1)(
-            delayed(run_single_simulation)() for _ in range(10000)
+            delayed(run_single_simulation)() for _ in range(1000)
         )
 
         forecast_OU[i, :, :] = np.mean(np.array(paths), axis=0)
