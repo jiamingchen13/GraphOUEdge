@@ -854,7 +854,6 @@ def grOU_edge_model(Y, Adj, test_set, K, test_size, forecast_step, R_L, C, jump_
             else:
                 raise NotImplementedError("method must be among 'backward', 'naive' or 'kalman'.")
 
-
         # Make predictions
         def run_single_simulation():
             """Wrapper function for single simulation"""
