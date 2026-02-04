@@ -425,7 +425,7 @@ def estimate_Sigma_L(DeltaL: np.ndarray, Q: np.ndarray, epsilon: float = 0.01, g
             Sigmas.append(Sigma_hat_new)
     return Sigma_hat_new
 
-def estimate_integral_Levy_measure(DeltaL: np.ndarray, Q: np.ndarray, Sigma: np.ndarray = None, epsilon: float = 0.01, gamma: float = 1.01, K: Callable = lambda x: np.linalg.norm(x) > 1e-4, f: Callable = lambda x: x):
+def estimate_integral_Levy_measure(DeltaL: np.ndarray, Q: np.ndarray, Sigma: np.ndarray = None, epsilon: float = 0.01, gamma: float = 1.01, K: Callable = lambda x: np.linalg.norm(x) > 1e-3, f: Callable = lambda x: x):
     """
     Estimate the functional f(F) = \int_K f(z) F(dz) where f: R^d -> R^n of the Levy measure F from (irregularly spaced) Levy increments DeltaL.
     Theoretical guarantees of convergence are given in (Gegler, 2011) for functions of the form f(z) = (z^T A z)^l for matrix A and power l.
@@ -549,13 +549,13 @@ def estimate_MCAR(
     elif mu_estimator == 'MCAR_mean':
         mu_hat = AA_hat[p-1].dot(Y.mean(axis=1)) if mu is None else mu
     else:
-        raise ValueError("mu_estimator must be 'Levy_slope' or 'MCAR_mean.")
+        raise ValueError("mu_estimator must be 'Levy_slope' or 'MCAR_mean'.")
     if jump_activity == 'finite':
         f_hat = estimate_integral_Levy_measure(DeltaL, Q, Sigma_hat, K = lambda x: True, f= lambda x: x) if f is None else f
     elif jump_activity == 'infinite':
-        f_hat = estimate_integral_Levy_measure(DeltaL, Q, Sigma_hat, K = lambda x: np.linalg.norm(x) > 1e-4, f= lambda x: x) if f is None else f
+        f_hat = estimate_integral_Levy_measure(DeltaL, Q, Sigma_hat, K = lambda x: np.linalg.norm(x) > 1e-3, f= lambda x: x) if f is None else f
     else:
-        raise ValueError("jump_activity must be 'finite' or 'infinite.")
+        raise ValueError("jump_activity must be 'finite' or 'infinite'.")
     b_hat = mu_hat - f_hat if b is None else b
     converged = False
 
@@ -582,7 +582,7 @@ def estimate_MCAR(
         if jump_activity == 'finite':
             f_hat = estimate_integral_Levy_measure(DeltaL, Q, Sigma_hat, K = lambda x: True, f= lambda x: x) if f is None else f
         elif jump_activity == 'infinite':
-            f_hat = estimate_integral_Levy_measure(DeltaL, Q, Sigma_hat, K = lambda x: np.linalg.norm(x) > 6e-4, f= lambda x: x) if f is None else f
+            f_hat = estimate_integral_Levy_measure(DeltaL, Q, Sigma_hat, K = lambda x: np.linalg.norm(x) > 1e-3, f= lambda x: x) if f is None else f
         b_hat = mu_hat - f_hat if b is None else b
 
         converged = np.sum([np.linalg.norm(AA_hat_new[i] - AA_hat[i]) for i in range(p)]) <= epsilon

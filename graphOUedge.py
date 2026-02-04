@@ -13,7 +13,7 @@ class GraphOUEdge:
         self.C = C  # Covariates
         self.Adj = Adj  # Adjacency matrices for different stages
         self.W_C = W_C  # Edge weights for Covariates
-        self.alpha = np.zeros((self.L, ))    # Initialize standard autoregressive parameters
+        self.alpha = np.zeros((self.L, self.K))    # Initialize standard autoregressive parameters
         self.beta = [[0] * stage * C for stage in R_L]  # Initialize network power parameters
         self.W = [[np.multiply(W_C[c], Adj[stage]) for c in range(C) for stage in range(R_i)] for R_i in R_L]  # Edge weights
         self.Q = []   # Set of parameters
@@ -228,8 +228,8 @@ class GraphOUEdge:
             F_mean_hat = estimate_integral_Levy_measure(DeltaL, Q=Q_, Sigma=Sigma_hat, K=lambda x: True, f=lambda x: x)
             F_squared_hat = estimate_integral_Levy_measure(DeltaL, Q=Q_, Sigma=Sigma_hat, K=lambda x: True, f=lambda x: np.outer(x, x))
         elif jump_activity == 'infinite':
-            F_mean_hat = estimate_integral_Levy_measure(DeltaL, Q=Q_, Sigma=Sigma_hat, K=lambda x: np.linalg.norm(x) > 1e-4, f=lambda x: x)
-            F_squared_hat = estimate_integral_Levy_measure(DeltaL, Q=Q_, Sigma=Sigma_hat, K=lambda x: np.linalg.norm(x) > 1e-4, f=lambda x: np.outer(x, x))
+            F_mean_hat = estimate_integral_Levy_measure(DeltaL, Q=Q_, Sigma=Sigma_hat, K=lambda x: np.linalg.norm(x) > 1e-3, f=lambda x: x)
+            F_squared_hat = estimate_integral_Levy_measure(DeltaL, Q=Q_, Sigma=Sigma_hat, K=lambda x: np.linalg.norm(x) > 1e-3, f=lambda x: np.outer(x, x))
         else:
             raise ValueError("jump_activity must be 'finite' or 'infinite.")
 

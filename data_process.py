@@ -712,7 +712,7 @@ def OU_edge_model(Y, test_set, K, test_size, forecast_step, R_L, C, jump_activit
             x0 = window_data[:, -1]
         else:
             if method == 'backward':
-            # Backward - differences
+                # Backward - differences
                 flip_window = state_space(np.flip(window_data[:, -len(R_L):], axis=1), len(R_L), P_[-len(R_L):])
                 x0 = flip_window[:, 0] * np.repeat((-1) ** np.arange(len(R_L)), flip_window.shape[0] / len(R_L))
             elif method == 'naive':
@@ -724,7 +724,7 @@ def OU_edge_model(Y, test_set, K, test_size, forecast_step, R_L, C, jump_activit
                 x0 = kalman_filter_mcar_BM(window_data, Q_Q, Sigma_OU, P_, Q_, AA_hat, 1.01)
                 x0[:K] = window_data[:, -1]
             else:
-                raise NotImplementedError("method must be among backward, naive or kalman")
+                raise NotImplementedError("method must be among 'backward', 'naive' or 'kalman'.")
 
         # Make predictions
         def run_single_simulation():
