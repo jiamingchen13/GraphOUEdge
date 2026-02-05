@@ -244,7 +244,7 @@ def aggregate_assets(assets, base_dir, out_dir, max_workers_days=None):
 
 def MRC(Y, delta, theta):
     """
-    Compute the Modulated Realized Covariance (MRC) estimator.
+    Compute the Modulated Realized Correlation (MRC) estimator.
     """
     assets = Y.columns
     Y = np.asarray(Y)
@@ -270,10 +270,17 @@ def MRC(Y, delta, theta):
     # Sum of outer products barY_i barY_i^T and multiply the scaling factor
     S = sum(np.outer(barY[i], barY[i]) for i in range(m)) * ((n - 1) / (n - k_n + 1)) * (12 / k_n)
 
-    # Flatten covariance matrix
+    # Convert covariance to correlation
+    diag = np.sqrt(np.diag(S))
+    denom = np.outer(diag, diag)
+
+    # Numerical safety
+    Corr = np.divide(S, denom, out=np.zeros_like(S), where=denom > 0)
+
+    # Flatten correlation matrix
     iu = np.triu_indices(d)
     labels = [f"{assets[i]}_{assets[j]}" for i, j in zip(iu[0], iu[1])]
-    data = S[iu]
+    data = Corr[iu]
 
     return pd.Series(data, index=labels)
 
@@ -411,7 +418,7 @@ def line_graph(cov_data, TICKERS, corr_thres = 0.25, ratio_thres = 0.1):
     return [B, edges_]
 
 
-def log_data_to_cov_data(path: str, rule: str, delta = .6, theta = 1):
+def log_data_to_corr_data(path: str, rule: str, delta = .6, theta = 1):
     # Load empirical data
     data = np.load(path + 'log_price.npz')
     index = pd.to_datetime(data["timestamps"])
@@ -419,7 +426,7 @@ def log_data_to_cov_data(path: str, rule: str, delta = .6, theta = 1):
     log_price_data = pd.DataFrame({col: data[col] for col in columns}, index=index)
     data.close()
 
-    # Compute modulated realised covariance
+    # Compute modulated realised correlation
     out = {}
 
     for timestamp, group in log_price_data.resample(rule):
@@ -428,9 +435,9 @@ def log_data_to_cov_data(path: str, rule: str, delta = .6, theta = 1):
             continue
         out[timestamp] = res
 
-    cov_data = pd.DataFrame.from_dict(out, orient='index')
-    np.savez(path + 'cov.npz', timestamps=cov_data.index.values.astype('datetime64[m]'),
-             **{col: cov_data[col].values for col in cov_data.columns})
+    corr_data = pd.DataFrame.from_dict(out, orient='index')
+    np.savez(path + 'corr.npz', timestamps=corr_data.index,
+             **{col: corr_data[col].values for col in corr_data.columns})
 
 
 def hurwitz_principal_minors(a):
