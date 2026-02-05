@@ -811,7 +811,7 @@ def grOU_edge_model(Y, Adj, test_set, K, test_size, forecast_step, R_L, C, jump_
             # Problem setup
             prob = cp.Problem(objective, constraints)
             try:
-                prob.solve(solver=cp.CVXOPT, abstol=1e-5, reltol=1e-5, feastol=1e-5)
+                prob.solve(solver=cp.CVXOPT)
                 theta_hat = x.value
                 if theta_hat is None:
                     prob.solve(solver=cp.SCS)
