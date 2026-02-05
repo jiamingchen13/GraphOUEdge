@@ -183,14 +183,14 @@ def process_orderbook(orderbook_name, TICKER, output_path):
     df_orderbook = df_orderbook.loc[(df_orderbook["seconds"] >= market_open_seconds) &
                                     (df_orderbook["seconds"] <= market_close_seconds)]
 
-    # 6. downsample tick-by-tick mid-quote price data into 1-second sampling, keeping only the last tick in each second with forward-fill
+    # 6. downsample tick-by-tick mid-quote price data into 1-minute sampling, keeping only the last tick in each minute with forward-fill
     df_orderbook['timestamp'] = pd.to_datetime(df_orderbook['seconds'], unit='s', origin=pd.Timestamp(date))
     df_orderbook = df_orderbook.set_index('timestamp')
-    df_orderbook_sec = df_orderbook.resample('1s').last().ffill()
+    df_orderbook_min = df_orderbook.resample('1min').last().ffill()
 
     # save
     output_name = os.path.join(output_path, TICKER + "_" + "data" + "_" + str(date.date()) + ".npz")
-    np.savez(output_name, timestamps=df_orderbook_sec.index.astype('datetime64[s]'), mid=df_orderbook_sec['mid'].values)
+    np.savez(output_name, timestamps=df_orderbook_min.index.values.astype('datetime64[m]'), mid=df_orderbook_min['mid'].values)
 
     return log + orderbook_name + ' completed.'
 
@@ -239,7 +239,7 @@ def aggregate_assets(assets, base_dir, out_dir, max_workers_days=None):
 
     # Save aggregated dataset
     log_price_path = out_dir + 'log_price.npz'
-    np.savez(log_price_path, timestamps=log_price_data.index.astype('datetime64[s]'), **{col: log_price_data[col].values for col in log_price_data.columns})
+    np.savez(log_price_path, timestamps=log_price_data.index.values.astype('datetime64[m]'), **{col: log_price_data[col].values for col in log_price_data.columns})
 
 
 def MRC(Y, delta, theta):
@@ -429,7 +429,7 @@ def log_data_to_cov_data(path: str, rule: str, delta = .6, theta = 1):
         out[timestamp] = res
 
     cov_data = pd.DataFrame.from_dict(out, orient='index')
-    np.savez(path + 'cov.npz', timestamps=cov_data.index.astype('datetime64[s]'),
+    np.savez(path + 'cov.npz', timestamps=cov_data.index.values.astype('datetime64[m]'),
              **{col: cov_data[col].values for col in cov_data.columns})
 
 
