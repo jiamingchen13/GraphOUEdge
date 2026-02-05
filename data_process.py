@@ -665,7 +665,7 @@ def NA_model(Y, test_set, forecast_step):
     print(f'RMSE for Naive model is: {RMSE_NA}')
 
 
-def OU_edge_model(Y, test_set, K, test_size, forecast_step, R_L, C, jump_activity, P_, Q_, method):
+def OU_edge_model(Y, test_set, K, test_size, forecast_step, R_L, C, jump_activity, P_, Q_, method = 'naive'):
     # OU Edge model
 
     forecast_OU = np.zeros((test_size, K, forecast_step))
@@ -759,7 +759,7 @@ def OU_edge_model(Y, test_set, K, test_size, forecast_step, R_L, C, jump_activit
     print(f'Direction success rate for OU({len(R_L)}) Edge model is: {(test_set_dir == forecast_OU_dir).mean()}')
 
 
-def grOU_edge_model(Y, Adj, test_set, K, test_size, forecast_step, R_L, C, jump_activity, P_, Q_, method):
+def grOU_edge_model(Y, Adj, test_set, K, test_size, forecast_step, R_L, C, jump_activity, P_, Q_, method = 'naive'):
     # graph OU Edge model
 
     # Derive the adjacency matrix for edge graph
@@ -814,14 +814,11 @@ def grOU_edge_model(Y, Adj, test_set, K, test_size, forecast_step, R_L, C, jump_
                 prob.solve(solver=cp.CVXOPT, abstol=1e-5, reltol=1e-5, feastol=1e-5)
                 theta_hat = x.value
                 if theta_hat is None:
-                    prob.solve(solver=cp.MOSEK)
-                    theta_hat = x.value
-            except:
-                prob.solve(solver=cp.MOSEK)
-                theta_hat = x.value
-                if theta_hat is None:
                     prob.solve(solver=cp.SCS)
                     theta_hat = x.value
+            except:
+                prob.solve(solver=cp.SCS)
+                theta_hat = x.value
             idx = 0
             alpha_pred = []
             beta_pred = []
@@ -858,7 +855,7 @@ def grOU_edge_model(Y, Adj, test_set, K, test_size, forecast_step, R_L, C, jump_
         def run_single_simulation():
             """Wrapper function for single simulation"""
             return simulate_MCAR_compound_poisson(
-                [i * (P_[1] - P_[0]) for i in range(forecast_step + 1)],
+                [j * (P_[1] - P_[0]) for j in range(forecast_step + 1)],
                 Q_Q,
                 x0,
                 b,
