@@ -700,7 +700,7 @@ def OU_edge_model(Y, test_set, K, test_size, forecast_step, R_L, C, jump_activit
             # for l = 1 or 2
             if len(R_L) < 3:
                 theta_hat_OU = minimize(lambda x: -np.matmul(x, H) + 0.5 * np.matmul(x, np.matmul(HH, x)), theta_hat_OU,
-                                        bounds=[(0.0, None)] * len(theta_hat_OU), method='L-BFGS-B').x
+                                        bounds=[(0.0, None)] * theta_hat_OU.shape[0] * theta_hat_OU.shape[1], method='L-BFGS-B').x
             # for l >= 3
             else:
                 n = len(theta_hat_OU)

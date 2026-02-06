@@ -309,39 +309,31 @@ def estimate_OU_drift(Y: np.ndarray, R_L: np.ndarray, C: int, P: np.ndarray, Q: 
         vec_theta_hat = np.repeat(np.matmul(np.linalg.pinv(KK), K)[:, np.newaxis], d, axis=1)
 
     else:
+        # compute K
         K = np.zeros(p * d)
         for k in range(p):
-            integral = np.zeros((d, d))
-            if k == 0:
-                integrand = X[-d:, :]
-            else:
-                integrand = X[-d - k * d:-k * d, :]
             for i in range(d):
+                integral = np.zeros(d)
+                # (i+1)-th entry of D^{p-k-1}Y
+                integrand = X[-(k + 1) * d + i, :]
                 for j in range(d):
                     # left-hand Riemann sum (converges in L2 to Ito Integral)
-                    integral[i, j] = np.sum(integrand[i, :-1] * DY_thresh[j, :])
-
-            K[k] = -np.sum(np.multiply(Sigma_inv, integral))
+                    integral[j] = np.sum(integrand[:-1] * DY_thresh[j, :])
+                K[k * d + i] = - np.matmul(Sigma_inv, integral)[i]
 
         # compute [K]
         KK = np.zeros((p * d, p * d))
         for k in range(p):
-            for l in range(p):
-                if k == 0:
-                    integrand_one = X[-d:, :]
-                else:
-                    integrand_one = X[-d - k * d:-k * d, :]
-                if l == 0:
-                    integrand_two = X[-d:, :]
-                else:
-                    integrand_two = X[-d - l * d:-l * d, :]
-                integral = np.zeros((d, d))
-                for i in range(d):
+            for i in range(d):
+                # (i+1)-th entry of D^{p-k-1}Y
+                integrand_one = X[-(k + 1) * d + i, :]
+                for l in range(p):
                     for j in range(d):
+                        # (j+1)-th entry of D^{p-l-1}Y
+                        integrand_two = X[-(l + 1) * d + j, :]
                         # left-hand Riemann sum (converges a.s. to Riemann Integral, for any choice of mid-point)
-                        integral[i, j] = np.sum(integrand_one[i, :-1] * integrand_two[j, :-1] * (Q[1:] - Q[:-1]))
-
-                KK[k, l] = np.sum(np.multiply(Sigma_inv, integral))
+                        integral = np.sum(integrand_one[:-1] * integrand_two[:-1] * np.diff(Q))
+                        KK[k * d + i, l * d + j] = Sigma_inv[i, j] * integral
 
         vec_theta_hat = np.matmul(np.linalg.pinv(KK), K).reshape(p, d)
 
@@ -686,7 +678,7 @@ def compute_H_HH(Y: np.ndarray, p: int, P: np.ndarray, Q: np.ndarray, b: np.ndar
     for k in range(p):
         for i in range(d):
             integral = np.zeros((d,))
-            # (i+1)-th entry of D^{p-k}Y
+            # (i+1)-th entry of D^{p-k-1}Y
             integrand = X[-(k+1)*d+i, :]
             for j in range(d):
                 # left-hand Riemann sum (converges in L2 to Ito Integral)
