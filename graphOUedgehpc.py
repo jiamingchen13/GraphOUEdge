@@ -36,7 +36,7 @@ class GraphOUEdgehpc:
         return self.alpha
 
     def alpha_set(self, alpha):
-        self.alpha = np.array([[x] * self.K for x in alpha]).reshape(self.L, self.K)
+        self.alpha = alpha
 
     def beta_get(self):
         return self.beta
@@ -172,7 +172,7 @@ class GraphOUEdgehpc:
             with open(os.path.join(self.data_dir, f'grCAR_{jump_regime}_estimates_Cov.npy'), 'wb') as f:
                 np.save(f, estimates_Cov)
 
-    def estimate_unknown_Levy(self, Y, jump_activity: str = 'infinite'):
+    def estimate_unknown_Levy(self, Y, jump_activity: str = 'infinite', is_global=True):
         """Estimate and save the parameters of unknown Levy process."""
 
         n = int(np.floor((Y.shape[1] - 1) ** (1/7)))
@@ -181,8 +181,8 @@ class GraphOUEdgehpc:
         Q_ = P_[::n ** 4]  # delta_Q = n^(-2) = delta_P^(1/3) and delta_Q n -> 0
         Y_ = Y.iloc[:, :(n ** 7 + 1)]
 
-        QQ_hat, (b_hat, Sigma_hat) = estimate_MCAR(Y = Y_, p = self.L, P = P_, Q = Q_, A = self.Adj, W_C = self.W_C,
-                                                   R_L = self.R_L, C = self.C, jump_activity = jump_activity)
+        QQ_hat, (b_hat, Sigma_hat) = estimate_MCAR(Y = Y_, P = P_, Q = Q_, A = self.Adj, W_C = self.W_C,
+                                                   R_L = self.R_L, C = self.C, jump_activity = jump_activity, is_global=is_global)
         DeltaL = recover_BDLP(Y = Y_, p = self.L, P = P_, Q = Q_, AA = QQ_hat)
         if jump_activity == 'finite':
             F_squared_hat = estimate_integral_Levy_measure(DeltaL, Q = Q_, Sigma = Sigma_hat, K = lambda x: True,

@@ -151,10 +151,10 @@ def estimate_grCAR_drift(Y: np.ndarray, A, W_C, p: int, R_L: np.ndarray, C: int,
                 # left-hand Riemann sum (converges in L2 to Ito Integral)
                 integral[i, j] = np.sum(integrand[i, :-1] * DY_thresh[j, :])
 
-        K[idx] = - np.sum(np.multiply(Sigma_inv, integral))
+        K[idx] = -np.sum(np.multiply(Sigma_inv, integral))
         for c in range(C):
             for r in range(R_L[k]):
-                K[idx + c * R_L[k] + r + 1] = - np.sum(np.multiply(np.matmul(np.multiply(W_C[c], A[r]).T, Sigma_inv), integral))
+                K[idx + c * R_L[k] + r + 1] = -np.sum(np.multiply(np.matmul(np.multiply(W_C[c], A[r]).T, Sigma_inv), integral))
         idx += C * R_L[k] + 1
 
     # compute [K]
@@ -201,8 +201,8 @@ def estimate_grCAR_drift(Y: np.ndarray, A, W_C, p: int, R_L: np.ndarray, C: int,
     else:
         return vec_theta_hat
 
-def estimate_OU_drift(Y: np.ndarray, R_L: np.ndarray, E: int, C: int, P: np.ndarray, Q: np.ndarray, b: np.ndarray,
-                      nu: np.ndarray = None, Sigma: np.ndarray = None, with_cov: bool = False):
+def estimate_OU_drift(Y: np.ndarray, R_L: np.ndarray, C: int, P: np.ndarray, Q: np.ndarray, b: np.ndarray,
+                      nu: np.ndarray = None, Sigma: np.ndarray = None, with_cov: bool = False, is_global: bool = True):
     """
     Estimate OU drift parameters from the realisation of a process with driving Levy triplet (b, Sigma, F).
     Here the Levy drift parameter b corresponds to
@@ -210,7 +210,6 @@ def estimate_OU_drift(Y: np.ndarray, R_L: np.ndarray, E: int, C: int, P: np.ndar
         - classic truncation t(x) = 1_{|x|<=1} when the process has infinite jump activity, thus E[L_1] = b + \int_{|z|>1} z F(dz).
     :param Y: Process observation, (d, N+1) np.ndarray
     :param R_L: Maximum stage for each Lag
-    :param E: Number of edges
     :param C: Covariates
     :param P: finer partition over which we observe the GrCAR process [0 = s_0, ..., s_N = t], (N+1, ) np.ndarray
     :param Q: coarser partition over which to approximate the integrals [0 = u_0, ..., u_M = t], (M+1, ) np.ndarray
@@ -218,6 +217,7 @@ def estimate_OU_drift(Y: np.ndarray, R_L: np.ndarray, E: int, C: int, P: np.ndar
     :param nu: thresholding sequence, (d, M) np.ndarray
     :param Sigma: covariance matrix of the driving Levy process, (d, d) np.ndarray
     :param with_cov: whether to return the vectorized estimator with its estimated covariance, bool
+    :param is_global: whether to return the global estimator, bool
     :return if with_cov is True:
                 vec_theta_hat: vectorized estimated OU parameters
                 KK: estimated covariance of the estimated OU parameters
@@ -246,8 +246,10 @@ def estimate_OU_drift(Y: np.ndarray, R_L: np.ndarray, E: int, C: int, P: np.ndar
         Sigma_inv = np.linalg.pinv(Sigma)
     elif with_cov and Sigma is None:
         # estimate Sigma from data
-        global_AA_hat = estimate_OU_drift(Y, R_L, E, C, P, Q, b, with_cov=False)
-        AA_hat = [np.diag([x] * E) for x in global_AA_hat]
+        theta_hat = estimate_OU_drift(Y, R_L, C, P, Q, b, with_cov=False, is_global=is_global)
+        AA_hat = np.zeros((p, d, d))
+        idx = np.arange(d)
+        AA_hat[:, idx, idx] = theta_hat
         DeltaL = recover_BDLP(Y, p, P, Q, AA_hat)
         Sigma_hat = estimate_Sigma_L(DeltaL, Q)
         Sigma_inv = np.linalg.pinv(Sigma_hat)
@@ -268,42 +270,80 @@ def estimate_OU_drift(Y: np.ndarray, R_L: np.ndarray, E: int, C: int, P: np.ndar
     DY_thresh = DY * (np.abs(DY) < nu)
 
     # compute K
-    K = np.zeros(p)
-    for k in range(p):
-        integral = np.zeros((d, d))
-        if k == 0:
-            integrand = X[-d:, :]
-        else:
-            integrand = X[-d - k * d:-k * d, :]
-        for i in range(d):
-            for j in range(d):
-                # left-hand Riemann sum (converges in L2 to Ito Integral)
-                integral[i, j] = np.sum(integrand[i, :-1] * DY_thresh[j, :])
-
-        K[k] = - np.sum(np.multiply(Sigma_inv, integral))
-
-    # compute [K]
-    KK = np.zeros((p, p))
-    for k in range(p):
-        for l in range(p):
-            if k == 0:
-                integrand_one = X[-d:, :]
-            else:
-                integrand_one = X[-d - k * d:-k * d, :]
-            if l == 0:
-                integrand_two = X[-d:, :]
-            else:
-                integrand_two = X[-d - l * d:-l * d, :]
+    if is_global:
+        K = np.zeros(p)
+        for k in range(p):
             integral = np.zeros((d, d))
+            if k == 0:
+                integrand = X[-d:, :]
+            else:
+                integrand = X[-d - k * d:-k * d, :]
             for i in range(d):
                 for j in range(d):
-                    # left-hand Riemann sum (converges a.s. to Riemann Integral, for any choice of mid-point)
-                    integral[i, j] = np.sum(integrand_one[i, :-1] * integrand_two[j, :-1] * (Q[1:] - Q[:-1]))
+                    # left-hand Riemann sum (converges in L2 to Ito Integral)
+                    integral[i, j] = np.sum(integrand[i, :-1] * DY_thresh[j, :])
 
-            KK[k, l] = np.sum(np.multiply(Sigma_inv, integral))
+            K[k] = -np.sum(np.multiply(Sigma_inv, integral))
 
-    # compute and return theta_hat
-    vec_theta_hat = np.matmul(np.linalg.pinv(KK), K)
+        # compute [K]
+        KK = np.zeros((p, p))
+        for k in range(p):
+            for l in range(p):
+                if k == 0:
+                    integrand_one = X[-d:, :]
+                else:
+                    integrand_one = X[-d - k * d:-k * d, :]
+                if l == 0:
+                    integrand_two = X[-d:, :]
+                else:
+                    integrand_two = X[-d - l * d:-l * d, :]
+                integral = np.zeros((d, d))
+                for i in range(d):
+                    for j in range(d):
+                        # left-hand Riemann sum (converges a.s. to Riemann Integral, for any choice of mid-point)
+                        integral[i, j] = np.sum(integrand_one[i, :-1] * integrand_two[j, :-1] * (Q[1:] - Q[:-1]))
+
+                KK[k, l] = np.sum(np.multiply(Sigma_inv, integral))
+
+        # compute and return theta_hat
+        vec_theta_hat = np.repeat(np.matmul(np.linalg.pinv(KK), K)[:, np.newaxis], d, axis=1)
+
+    else:
+        K = np.zeros(p * d)
+        for k in range(p):
+            integral = np.zeros((d, d))
+            if k == 0:
+                integrand = X[-d:, :]
+            else:
+                integrand = X[-d - k * d:-k * d, :]
+            for i in range(d):
+                for j in range(d):
+                    # left-hand Riemann sum (converges in L2 to Ito Integral)
+                    integral[i, j] = np.sum(integrand[i, :-1] * DY_thresh[j, :])
+
+            K[k] = -np.sum(np.multiply(Sigma_inv, integral))
+
+        # compute [K]
+        KK = np.zeros((p * d, p * d))
+        for k in range(p):
+            for l in range(p):
+                if k == 0:
+                    integrand_one = X[-d:, :]
+                else:
+                    integrand_one = X[-d - k * d:-k * d, :]
+                if l == 0:
+                    integrand_two = X[-d:, :]
+                else:
+                    integrand_two = X[-d - l * d:-l * d, :]
+                integral = np.zeros((d, d))
+                for i in range(d):
+                    for j in range(d):
+                        # left-hand Riemann sum (converges a.s. to Riemann Integral, for any choice of mid-point)
+                        integral[i, j] = np.sum(integrand_one[i, :-1] * integrand_two[j, :-1] * (Q[1:] - Q[:-1]))
+
+                KK[k, l] = np.sum(np.multiply(Sigma_inv, integral))
+
+        vec_theta_hat = np.matmul(np.linalg.pinv(KK), K).reshape(p, d)
 
     if with_cov and Sigma is not None:
         return vec_theta_hat, KK, K
@@ -478,7 +518,6 @@ def choose_nu(DeltaL: np.ndarray, Q: np.ndarray, epsilon: float = 0.01, gamma: f
 def estimate_MCAR(
         Model: str,
         Y: np.ndarray,
-        p: int,
         P: np.ndarray,
         Q: np.ndarray,
         A: np.ndarray,
@@ -487,13 +526,14 @@ def estimate_MCAR(
         C: int,
         epsilon: float = 0.01,
         max_iter: int = 200,
-        AA: list = None,
+        AA: np.ndarray = None,
         b: np.ndarray = None,
         Sigma: np.ndarray = None,
         f: np.ndarray = None,
         mu: np.ndarray = None,
         jump_activity: str = 'infinite',
-        mu_estimator: str = 'MCAR_mean'
+        mu_estimator: str = 'MCAR_mean',
+        is_global: bool = True
     ):
     """
     Estimate MCAR parameters from the realisation of a MCAR process. Estimate both drift parameter and Levy triplet parameters (b, Sigma).
@@ -515,7 +555,6 @@ def estimate_MCAR(
 
     :param Model: Can either be OU or grOU
     :param Y: MCAR process observation, (d, N+1) np.ndarray
-    :param p: MCAR parameter, int
     :param P: finer partition over which we observe the MCAR process [0 = s_0, ..., s_N = t], (N+1, ) np.ndarray
     :param Q: coarser partition over which to approximate the integrals [0 = u_0, ..., u_M = t], (M+1, ) np.ndarray
     :param A: graph adjacency matrix, maximum stage of (d, d) np.ndarray
@@ -528,15 +567,19 @@ def estimate_MCAR(
     :param Sigma: covariance matrix of the driving Levy process - only needed if with_cov is True, (d, d) np.ndarray
     :param f: Levy measure component of drift parameter f:= \int_{|z|>1} z F(dz) or \int_{R^d} z F(dz), (d, ) np.ndarray
     :param mu: 'actual' drift of Levy process mu := E[L_1], (d, ) np.ndarray
+    :param is_global: whether to return the global estimator, bool
     :return AA_hat: estimated MCAR drift parameters, list of p (d, d) np.ndarray
             b_hat: estimated driving Levy process drift parameter, (d, ) np.ndarray
             Sigma_hat: estimated driving Levy process covariance parameter, (d, ) np.ndarray
     """
+    p = len(R_L)
     d = Y.shape[0]
     b_hat = np.zeros(d) if b is None else b
+    AA_hat = np.zeros((p, d, d))
+    idx = np.arange(d)
     if Model == 'OU':
-        global_AA_hat = estimate_OU_drift(Y, R_L, d, C, P, Q, b_hat) if AA is None else AA
-        AA_hat = [np.diag([x] * d) for x in global_AA_hat]
+        theta_hat = estimate_OU_drift(Y, R_L, C, P, Q, b, with_cov=False, is_global=is_global) if AA is None else AA
+        AA_hat[:, idx, idx] = theta_hat
     elif Model == 'grOU':
         global_AA_hat = estimate_grCAR_drift(Y, A, W_C, p, R_L, C, P, Q, b_hat) if AA is None else AA
         AA_hat = estimator_to_QQ(global_AA_hat, R_L, C, W_C, A, d)
@@ -564,12 +607,13 @@ def estimate_MCAR(
     bs = [b_hat]
     Sigmas = [Sigma_hat]
     n_iter = 0
+    AA_hat_new = np.zeros((p, d, d))
 
     while not converged:
         n_iter += 1
         if Model == 'OU':
-            global_AA_hat_new = estimate_OU_drift(Y, R_L, d, C, P, Q, b_hat) if AA is None else AA
-            AA_hat_new = [np.diag([x] * d) for x in global_AA_hat_new]
+            theta_hat_new = estimate_OU_drift(Y, R_L, C, P, Q, b_hat, with_cov=False, is_global=is_global) if AA is None else AA
+            AA_hat_new[:, idx, idx] = theta_hat_new
         elif Model == 'grOU':
             global_AA_hat_new = estimate_grCAR_drift(Y, A, W_C, p, R_L, C, P, Q, b_hat) if AA is None else AA
             AA_hat_new = estimator_to_QQ(global_AA_hat_new, R_L, C, W_C, A, d)

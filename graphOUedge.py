@@ -35,8 +35,8 @@ class GraphOUEdge:
     def alpha_get(self):
         return self.alpha
 
-    def alpha_set(self, alpha: List):
-        self.alpha = np.array([[x] * self.K for x in alpha]).reshape(self.L, self.K)
+    def alpha_set(self, alpha: np.ndarray):
+        self.alpha = alpha
 
     def beta_get(self):
         return self.beta
@@ -212,12 +212,12 @@ class GraphOUEdge:
             with open(os.path.join(self.data_dir, f'grCAR_{jump_regime}_estimates_Cov.npy'), 'wb') as f:
                 np.save(f, estimates_Cov)
 
-    def estimate_unknown_Levy(self, Y, P_, Q_, model, jump_activity: str = 'finite'):
+    def estimate_unknown_Levy(self, Y, P_, Q_, model, jump_activity: str = 'finite', is_global=True):
         """Estimate and save the parameters of unknown Levy process."""
 
-        QQ_hat, (b_hat, Sigma_hat) = estimate_MCAR(Model = model, Y=Y, p=self.L, P=P_, Q=Q_, A=self.Adj, W_C=self.W_C, R_L=self.R_L, C=self.C, jump_activity=jump_activity)
+        QQ_hat, (b_hat, Sigma_hat) = estimate_MCAR(Model = model, Y=Y, P=P_, Q=Q_, A=self.Adj, W_C=self.W_C, R_L=self.R_L, C=self.C, jump_activity=jump_activity, is_global=is_global)
         if model == 'OU':
-            theta_hat, KK, K = estimate_OU_drift(Y, self.R_L, self.K, self.C, P_, Q_, b_hat, None, Sigma_hat, with_cov=True)
+            theta_hat, KK, K = estimate_OU_drift(Y, self.R_L, self.C, P_, Q_, b_hat, None, Sigma_hat, with_cov=True, is_global=is_global)
         elif model == 'grOU':
             theta_hat, KK, K = estimate_grCAR_drift(Y, self.Adj, self.W_C, self.L, self.R_L, self.C, P_, Q_, b_hat, None, Sigma_hat, with_cov=True)
         else:
