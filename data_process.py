@@ -3,6 +3,7 @@ import glob
 import math
 import re
 import pandas as pd
+import seaborn as sns
 import matplotlib.pyplot as plt
 import cvxpy as cp
 from joblib import Parallel, delayed
@@ -607,6 +608,40 @@ def kalman_filter_mcar_BM(Y, A, Sigma, P_, Q_, AA_hat, gamma):
     return m_filtered[-1]
 
 
+def corr_series_to_heatmap(s: pd.Series, sep="_", title="Correlation Heatmap"):
+    df = s.to_frame(name="corr")
+    pairs = df.index.to_series().str.split(sep, expand=True)
+
+    df["var1"] = pairs[0]
+    df["var2"] = pairs[1]
+
+    vars_ = sorted(set(df["var1"]).union(set(df["var2"])))
+    corr_matrix = pd.DataFrame(np.nan, index=vars_, columns=vars_)
+
+    for _, row in df.iterrows():
+        i = row["var1"]
+        j = row["var2"]
+        val = row["corr"]
+        corr_matrix.loc[i, j] = val
+        corr_matrix.loc[j, i] = val
+
+    np.fill_diagonal(corr_matrix.values, 1.0)
+
+    plt.figure(figsize=(6, 5))
+    sns.heatmap(
+        corr_matrix,
+        annot=True,
+        fmt=".2f",
+        vmin=-1, vmax=1,
+        cmap="coolwarm"
+    )
+    plt.title(title)
+    plt.tight_layout()
+    plt.show()
+
+    return corr_matrix
+
+
 def UAR_model(Y, test_set, K, test_size, forecast_step, lag = None):
     # Univariate AR Edge Model
 
@@ -722,7 +757,7 @@ def OU_edge_model(Y, test_set, K, test_size, forecast_step, R_L, C, jump_activit
                 Q_Q = X_OU.Q_matrix(False)
 
         # alphas_OU.append(theta_hat_OU)
-        print(theta_hat_OU)
+
         if len(R_L) == 1:
             x0 = window_data[:, -1]
         else:
