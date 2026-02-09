@@ -18,7 +18,7 @@ from graphOUedge import GraphOUEdge
 from mcar.estimate import *
 from mcar.simulate import *
 
-def multiprocess_orderbooks(TICKER, input_path, output_path, log_path, check_for_processed_data=True):
+def multiprocess_orderbooks(TICKER, input_path, output_path, log_path, check_for_processed_data=True, sample_interval = '1s'):
     """
     Pre-process LOBSTER data into feature-response pairs parallely. The data must be stored in the input_path
     directory as daily message book and order book files. For details of processing steps see description of process_orderbook function.
@@ -33,6 +33,7 @@ def multiprocess_orderbooks(TICKER, input_path, output_path, log_path, check_for
     :param output_path: the path where we wish to save the processed datasets (as .npz files), str
     :param log_path: the path where processing logs are saved, str
     :param check_for_processed_data: check if processed .npz files already exist in output_path and skip these dates for processing, bool
+    :param sample_interval: sample interval
     :return: saves the aggregated mid-quote price in output_path, as .npz files with numpy attributes
              "orderbook_features" (:, 1).
     """
@@ -58,7 +59,7 @@ def multiprocess_orderbooks(TICKER, input_path, output_path, log_path, check_for
 
     try:
         pool = Pool(os.cpu_count())
-        engine = ProcessOrderbook(TICKER, output_path)
+        engine = ProcessOrderbook(TICKER, output_path, sample_interval)
         logs = pool.map(engine, csv_orderbook)
     finally:  # To make sure processes are closed in the end, even if errors happen
         pool.close()
@@ -78,16 +79,17 @@ class ProcessOrderbook(object):
     Multiprocessing engine for pre-processing LOBSTER data into feature-response npz files.
     """
 
-    def __init__(self, TICKER, output_path):
+    def __init__(self, TICKER, output_path, sample_interval):
+        self.sample_interval = sample_interval
         self.TICKER = TICKER
         self.output_path = output_path
 
     def __call__(self, orderbook_name):
-        output = process_orderbook(orderbook_name, self.TICKER, self.output_path)
+        output = process_orderbook(orderbook_name, self.TICKER, self.output_path, self.sample_interval)
         return output
 
 
-def process_orderbook(orderbook_name, TICKER, output_path):
+def process_orderbook(orderbook_name, TICKER, output_path, sample_interval):
     """
     Function carrying out processing of single order book orderbook_name. Features are not normalized.
     The data is treated in the following way:
@@ -99,6 +101,7 @@ def process_orderbook(orderbook_name, TICKER, output_path):
             "ASKp1", "ASKs1", "BIDp1",  "BIDs1" str
     :param TICKER: the TICKER to be considered, str
     :param output_path: the path where we wish to save the processed datasets (as .npz files), str
+    :param sample_interval: sample interval
     :return: saves the aggregated mid-quote price in output_path, as .npz files with numpy attributes
              "orderbook_features" (:, 1).
     """
@@ -183,14 +186,14 @@ def process_orderbook(orderbook_name, TICKER, output_path):
     df_orderbook = df_orderbook.loc[(df_orderbook["seconds"] >= market_open_seconds) &
                                     (df_orderbook["seconds"] <= market_close_seconds)]
 
-    # 6. downsample tick-by-tick mid-quote price data into 1-minute sampling, keeping only the last tick in each minute with forward-fill
+    # 6. downsample tick-by-tick mid-quote price data into sampling, keeping only the last tick in each sample interval with forward-fill
     df_orderbook['timestamp'] = pd.to_datetime(df_orderbook['seconds'], unit='s', origin=pd.Timestamp(date))
     df_orderbook = df_orderbook.set_index('timestamp')
-    df_orderbook_min = df_orderbook.resample('1min').last().ffill()
+    df_orderbook_min = df_orderbook.resample(sample_interval).last().ffill()
 
     # save
     output_name = os.path.join(output_path, TICKER + "_" + "data" + "_" + str(date.date()) + ".npz")
-    np.savez(output_name, timestamps=df_orderbook_min.index.values.astype('datetime64[m]'), mid=df_orderbook_min['mid'].values)
+    np.savez(output_name, timestamps=df_orderbook_min.index.astype('datetime64[s]'), mid=df_orderbook_min['mid'].values)
 
     return log + orderbook_name + ' completed.'
 
@@ -239,10 +242,10 @@ def aggregate_assets(assets, base_dir, out_dir, max_workers_days=None):
 
     # Save aggregated dataset
     log_price_path = out_dir + 'log_price.npz'
-    np.savez(log_price_path, timestamps=log_price_data.index.values.astype('datetime64[m]'), **{col: log_price_data[col].values for col in log_price_data.columns})
+    np.savez(log_price_path, timestamps=log_price_data.index.astype('datetime64[s]'), **{col: log_price_data[col].values for col in log_price_data.columns})
 
 
-def MRC(Y, delta, theta):
+def MRC(Y, delta, theta, is_corr = True):
     """
     Compute the Modulated Realized Correlation (MRC) estimator.
     """
@@ -270,17 +273,18 @@ def MRC(Y, delta, theta):
     # Sum of outer products barY_i barY_i^T and multiply the scaling factor
     S = sum(np.outer(barY[i], barY[i]) for i in range(m)) * ((n - 1) / (n - k_n + 1)) * (12 / k_n)
 
-    # Convert covariance to correlation
-    diag = np.sqrt(np.diag(S))
-    denom = np.outer(diag, diag)
+    if is_corr:
+        # Convert covariance to correlation
+        diag = np.sqrt(np.diag(S))
+        denom = np.outer(diag, diag)
 
-    # Numerical safety
-    Corr = np.divide(S, denom, out=np.zeros_like(S), where=denom > 0)
+        # Numerical safety
+        S = np.divide(S, denom, out=np.zeros_like(S), where=denom > 0)
 
     # Flatten correlation matrix
     iu = np.triu_indices(d)
     labels = [f"{assets[i]}_{assets[j]}" for i, j in zip(iu[0], iu[1])]
-    data = Corr[iu]
+    data = S[iu]
 
     return pd.Series(data, index=labels)
 
@@ -418,7 +422,7 @@ def line_graph(cov_data, TICKERS, corr_thres = 0.25, ratio_thres = 0.1):
     return [B, edges_]
 
 
-def log_data_to_corr_data(path: str, rule: str, delta = .6, theta = 1):
+def log_data_to_corr_data(path: str, rule: str, delta = .6, theta = 1, is_corr = True):
     # Load empirical data
     data = np.load(path + 'log_price.npz')
     index = pd.to_datetime(data["timestamps"])
@@ -430,15 +434,18 @@ def log_data_to_corr_data(path: str, rule: str, delta = .6, theta = 1):
     out = {}
 
     for timestamp, group in log_price_data.resample(rule):
-        res = MRC(group, delta, theta)
+        res = MRC(group, delta, theta, is_corr)
         if res is None:
             continue
         out[timestamp] = res
 
     corr_data = pd.DataFrame.from_dict(out, orient='index')
-    np.savez(path + 'corr.npz', timestamps=corr_data.index,
+    if is_corr:
+        np.savez(path + 'corr.npz', timestamps=corr_data.index,
              **{col: corr_data[col].values for col in corr_data.columns})
-
+    else:
+        np.savez(path + 'cov.npz', timestamps=corr_data.index,
+                 **{col: corr_data[col].values for col in corr_data.columns})
 
 def hurwitz_principal_minors(a):
     #a = [a_1, a_2,..., a_l] length l
@@ -620,7 +627,6 @@ def UAR_model(Y, test_set, K, test_size, forecast_step, lag = None):
                 model = AutoReg(window_data, lags=best_p[j]).fit()
             else:
                 model = AutoReg(window_data, lags=lag).fit()
-            print(model.params)
             forecast_AR[i, j, :] = model.predict(start=len(window_data), end=len(window_data) + forecast_step - 1)
         df_AR = np.append(df_AR, test_set[i, :, 0:1], axis=1)
 
@@ -716,7 +722,7 @@ def OU_edge_model(Y, test_set, K, test_size, forecast_step, R_L, C, jump_activit
                 Q_Q = X_OU.Q_matrix(False)
 
         # alphas_OU.append(theta_hat_OU)
-
+        print(theta_hat_OU)
         if len(R_L) == 1:
             x0 = window_data[:, -1]
         else:
