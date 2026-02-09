@@ -620,6 +620,7 @@ def UAR_model(Y, test_set, K, test_size, forecast_step, lag = None):
                 model = AutoReg(window_data, lags=best_p[j]).fit()
             else:
                 model = AutoReg(window_data, lags=lag).fit()
+            print(model.params)
             forecast_AR[i, j, :] = model.predict(start=len(window_data), end=len(window_data) + forecast_step - 1)
         df_AR = np.append(df_AR, test_set[i, :, 0:1], axis=1)
 
@@ -695,23 +696,24 @@ def OU_edge_model(Y, test_set, K, test_size, forecast_step, R_L, C, jump_activit
         X_OU.alpha_set(theta_hat_OU)
         X_OU.beta_set([[0] * stage * C for stage in R_L])
         try:
-            Q_Q = X_OU.Q_matrix()
-        except:
-            # for l = 1 or 2
-            if len(R_L) < 3:
-                theta_hat_OU = minimize(lambda x: -np.matmul(x, H) + 0.5 * np.matmul(x, np.matmul(HH, x)), theta_hat_OU,
-                                        bounds=[(0.0, None)] * theta_hat_OU.shape[0] * theta_hat_OU.shape[1], method='L-BFGS-B').x
-            # for l >= 3
-            else:
-                n = len(theta_hat_OU)
-                hurwitz_constraint = NonlinearConstraint(hurwitz_principal_minors, lb=np.full(n, 1e-16), ub=np.full(n, np.inf))
-                theta_hat_OU = minimize(lambda x: -np.matmul(x, H) + 0.5 * np.matmul(x, np.matmul(HH, x)),
-                                        np.clip(theta_hat_OU, np.zeros(n), np.full(n, np.inf)),
-                                        bounds=Bounds(lb=np.zeros(n), ub=np.full(n, np.inf), keep_feasible=True),
-                                        constraints=[hurwitz_constraint], method='trust-constr').x
-            X_OU.alpha_set(theta_hat_OU)
-            X_OU.beta_set([[0] * stage * C for stage in R_L])
             Q_Q = X_OU.Q_matrix(False)
+        except:
+            if is_global:
+                # for l = 1 or 2
+                if len(R_L) < 3:
+                    theta_hat_OU = minimize(lambda x: -np.matmul(x, H) + 0.5 * np.matmul(x, np.matmul(HH, x)), theta_hat_OU,
+                                            bounds=[(0.0, None)] * theta_hat_OU.shape[0] * theta_hat_OU.shape[1], method='L-BFGS-B').x
+                # for l >= 3
+                else:
+                    n = len(theta_hat_OU)
+                    hurwitz_constraint = NonlinearConstraint(hurwitz_principal_minors, lb=np.full(n, 1e-16), ub=np.full(n, np.inf))
+                    theta_hat_OU = minimize(lambda x: -np.matmul(x, H) + 0.5 * np.matmul(x, np.matmul(HH, x)),
+                                            np.clip(theta_hat_OU, np.zeros(n), np.full(n, np.inf)),
+                                            bounds=Bounds(lb=np.zeros(n), ub=np.full(n, np.inf), keep_feasible=True),
+                                            constraints=[hurwitz_constraint], method='trust-constr').x
+                X_OU.alpha_set(theta_hat_OU)
+                X_OU.beta_set([[0] * stage * C for stage in R_L])
+                Q_Q = X_OU.Q_matrix(False)
 
         # alphas_OU.append(theta_hat_OU)
 

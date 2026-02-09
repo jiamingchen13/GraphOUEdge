@@ -216,12 +216,6 @@ class GraphOUEdge:
         """Estimate and save the parameters of unknown Levy process."""
 
         QQ_hat, (b_hat, Sigma_hat) = estimate_MCAR(Model = model, Y=Y, P=P_, Q=Q_, A=self.Adj, W_C=self.W_C, R_L=self.R_L, C=self.C, jump_activity=jump_activity, is_global=is_global)
-        if model == 'OU':
-            theta_hat, KK, K = estimate_OU_drift(Y, self.R_L, self.C, P_, Q_, b_hat, None, Sigma_hat, with_cov=True, is_global=is_global)
-        elif model == 'grOU':
-            theta_hat, KK, K = estimate_grCAR_drift(Y, self.Adj, self.W_C, self.L, self.R_L, self.C, P_, Q_, b_hat, None, Sigma_hat, with_cov=True)
-        else:
-            raise ValueError('Model not recognized')
         DeltaL = recover_BDLP(Y=Y, p=self.L, P=P_, Q=Q_, AA=QQ_hat)
 
         if jump_activity == 'finite':
@@ -244,8 +238,6 @@ class GraphOUEdge:
 
         with open(os.path.join(self.data_dir, f'MCAR_estimates_F_mean_{jump_activity}.npy'), 'wb') as f:
             np.save(f, F_mean_hat)
-
-        return np.matmul(theta_hat, K) - 0.5 * np.matmul(theta_hat, np.matmul(KK, theta_hat))
 
     def compute_beta(self, Q_hat, lag):
         Q_hat = Q_hat.reshape(self.K, -1)

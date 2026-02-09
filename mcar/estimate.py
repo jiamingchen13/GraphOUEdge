@@ -388,7 +388,7 @@ def recover_BDLP(Y: np.ndarray, p: int, P: np.ndarray, Q: np.ndarray, AA: np.nda
 
     return DeltaL_Q
 
-def disentangle_BM(DeltaL: np.ndarray, Q: np.ndarray, Sigma: np.ndarray, gamma: float = 1.3):
+def disentangle_BM(DeltaL: np.ndarray, Q: np.ndarray, Sigma: np.ndarray, gamma: float = 1.01):
     """
     Disentangle Brownian-only increments on the partition Q.
     To define the critical region B_N we generalize the approach in (Gegler, 2011) to irregularly spaced data.
@@ -423,7 +423,7 @@ def estimate_Sigma(DeltaW: np.ndarray, DeltaQ: np.ndarray):
     Sigma_hat = np.einsum('ki,ji->kj', DeltaZ, DeltaZ) / DeltaZ.shape[1]
     return Sigma_hat
 
-def estimate_Sigma_L(DeltaL: np.ndarray, Q: np.ndarray, epsilon: float = 0.01, gamma: float = 1.3):
+def estimate_Sigma_L(DeltaL: np.ndarray, Q: np.ndarray, epsilon: float = 0.01, gamma: float = 1.01):
     """
     Estimate the covariance matrix Sigma of the Brownian component from (irregularly spaced) Levy increments.
     Use the iterative approach in (Gegler, 2011) Section 4.
@@ -457,7 +457,7 @@ def estimate_Sigma_L(DeltaL: np.ndarray, Q: np.ndarray, epsilon: float = 0.01, g
             Sigmas.append(Sigma_hat_new)
     return Sigma_hat_new
 
-def estimate_integral_Levy_measure(DeltaL: np.ndarray, Q: np.ndarray, Sigma: np.ndarray = None, epsilon: float = 0.01, gamma: float = 1.3, K: Callable = lambda x: np.linalg.norm(x) > 1e-3, f: Callable = lambda x: x):
+def estimate_integral_Levy_measure(DeltaL: np.ndarray, Q: np.ndarray, Sigma: np.ndarray = None, epsilon: float = 0.01, gamma: float = 1.01, K: Callable = lambda x: np.linalg.norm(x) > 1e-3, f: Callable = lambda x: x):
     """
     Estimate the functional f(F) = \int_K f(z) F(dz) where f: R^d -> R^n of the Levy measure F from (irregularly spaced) Levy increments DeltaL.
     Theoretical guarantees of convergence are given in (Gegler, 2011) for functions of the form f(z) = (z^T A z)^l for matrix A and power l.
@@ -492,7 +492,7 @@ def estimate_integral_Levy_measure(DeltaL: np.ndarray, Q: np.ndarray, Sigma: np.
         f_hat = np.sum(np.array([f(DeltaZ[:, i]) for i in range(DeltaZ.shape[1])]), axis=0) / (Q[-1] - Q[0])
     return f_hat
 
-def choose_nu(DeltaL: np.ndarray, Q: np.ndarray, epsilon: float = 0.01, gamma: float = 1.3, Sigma: np.ndarray = None):
+def choose_nu(DeltaL: np.ndarray, Q: np.ndarray, epsilon: float = 0.01, gamma: float = 1.01, Sigma: np.ndarray = None):
     """
     This function chooses thresholds nu to disentangle the continuous component from the jump component of a one dimensional Levy process.
     :param DeltaL: increments of Levy process on the partition Q, (1, N) np.ndarray
@@ -570,7 +570,7 @@ def estimate_MCAR(
     AA_hat = np.zeros((p, d, d))
     idx = np.arange(d)
     if Model == 'OU':
-        theta_hat = estimate_OU_drift(Y, R_L, C, P, Q, b, with_cov=False, is_global=is_global) if AA is None else AA
+        theta_hat = estimate_OU_drift(Y, R_L, C, P, Q, b_hat, with_cov=False, is_global=is_global) if AA is None else AA
         AA_hat[:, idx, idx] = theta_hat
     elif Model == 'grOU':
         global_AA_hat = estimate_grCAR_drift(Y, A, W_C, p, R_L, C, P, Q, b_hat) if AA is None else AA
