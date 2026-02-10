@@ -729,7 +729,7 @@ def OU_edge_model(Y, test_set, K, test_size, forecast_step, R_L, C, jump_activit
     F_squared_OU = np.load(f'./data/LOBSTERdata/output/train/aggregate/MCAR_estimates_F_squared_{jump_activity}.npy')
 
     jump_F_OU = scipy.stats.multivariate_normal(mean=F_mean_OU, cov=(F_squared_OU - np.outer(F_mean_OU, F_mean_OU)), allow_singular=True)
-    # alphas_OU = []
+    alphas_OU = []
 
     for i in range(test_size):
         window_data = df_OU[:, i:]
@@ -756,7 +756,7 @@ def OU_edge_model(Y, test_set, K, test_size, forecast_step, R_L, C, jump_activit
                 X_OU.beta_set([[0] * stage * C for stage in R_L])
                 Q_Q = X_OU.Q_matrix(False)
 
-        # alphas_OU.append(theta_hat_OU)
+        alphas_OU.append(theta_hat_OU)
 
         if len(R_L) == 1:
             x0 = window_data[:, -1]
@@ -808,6 +808,7 @@ def OU_edge_model(Y, test_set, K, test_size, forecast_step, R_L, C, jump_activit
     test_set_dir = np.sign(np.diff(np.append(last_, test_set, axis=2), axis=2))
     print(f'Direction success rate for OU({len(R_L)}) Edge model is: {(test_set_dir == forecast_OU_dir).mean()}')
 
+    return np.array(alphas_OU)
 
 def grOU_edge_model(Y, Adj, test_set, K, test_size, forecast_step, R_L, C, jump_activity, P_, Q_, method = 'naive'):
     # graph OU Edge model
