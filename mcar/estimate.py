@@ -71,7 +71,7 @@ def estimate_MCAR_drift(Y: np.ndarray, p: int, P: np.ndarray, Q: np.ndarray, b: 
         AA_hat = inv_vectorize_AA(vec_AA_hat, p)
         return AA_hat
 
-def estimate_grCAR_drift(Y: np.ndarray, A, W_C, p: int, R_L: np.ndarray, C: int, P: np.ndarray, Q: np.ndarray, b: np.ndarray, nu: np.ndarray = None, Sigma: np.ndarray = None, with_cov: bool = False):
+def estimate_grCAR_drift(Y: np.ndarray, A, W_C, R_L: np.ndarray, C: int, P: np.ndarray, Q: np.ndarray, b: np.ndarray, nu: np.ndarray = None, Sigma: np.ndarray = None, with_cov: bool = False, is_global = True):
     """
     Estimate grCAR drift parameters from the realisation of a grCAR process with driving Levy triplet (b, Sigma, F).
     Here the Levy drift parameter b corresponds to
@@ -80,7 +80,6 @@ def estimate_grCAR_drift(Y: np.ndarray, A, W_C, p: int, R_L: np.ndarray, C: int,
     :param Y: MCAR process observation, (d, N+1) np.ndarray
     :param A: Graph adjacency matrix, maximum stage of (d, d) np.ndarray
     :param W_C: Edge weights for Covariates
-    :param p: Number of considered lags, int
     :param R_L: Maximum stage for each Lag, list of int
     :param C: Covariates, int
     :param P: Finer partition over which we observe the GrCAR process [0 = s_0, ..., s_N = t], (N+1, ) np.ndarray
@@ -89,11 +88,13 @@ def estimate_grCAR_drift(Y: np.ndarray, A, W_C, p: int, R_L: np.ndarray, C: int,
     :param nu: Thresholding sequence, (d, M) np.ndarray
     :param Sigma: Covariance matrix of the driving Levy process, (d, d) np.ndarray
     :param with_cov: whether to return the vectorized estimator with its estimated covariance, bool
+    :param is_global: whether to return the global estimator, bool
     :return if with_cov is True:
                 vec_theta_hat: vectorized estimated grCAR parameters, (p + sum(R_L) * C, ) np.ndarray
                 KK: estimated covariance of the estimated grCAR parameters, (p + sum(R_L) * C, p + sum(R_L) * C) np.ndarray
     """
     # approximate the state space representation by finite differences over P
+    p = len(R_L)
     X = state_space(Y, p, P)
 
     # approximate integrals on Q
@@ -116,7 +117,7 @@ def estimate_grCAR_drift(Y: np.ndarray, A, W_C, p: int, R_L: np.ndarray, C: int,
         Sigma_inv = np.linalg.pinv(Sigma)
     elif with_cov and Sigma is None:
         # estimate Sigma from data
-        global_AA_hat = estimate_grCAR_drift(Y, A, W_C, p, R_L, C, P, Q, b, with_cov=False)
+        global_AA_hat = estimate_grCAR_drift(Y, A, W_C, R_L, C, P, Q, b, with_cov=False, is_global=is_global)
         AA_hat = estimator_to_QQ(global_AA_hat, R_L, C, W_C, A, d)
         DeltaL = recover_BDLP(Y, p, P, Q, AA_hat)
         Sigma_hat = estimate_Sigma_L(DeltaL, Q)
@@ -138,58 +139,65 @@ def estimate_grCAR_drift(Y: np.ndarray, A, W_C, p: int, R_L: np.ndarray, C: int,
     DY_thresh = DY * (np.abs(DY) < nu)
 
     # compute K
-    K = np.zeros(p + sum(R_L) * C)
-    idx = 0
-    for k in range(p):
-        integral = np.zeros((d, d))
-        if k == 0:
-            integrand = X[-d:, :]
-        else:
-            integrand = X[-d-k*d:-k*d, :]
-        for i in range(d):
-            for j in range(d):
-                # left-hand Riemann sum (converges in L2 to Ito Integral)
-                integral[i, j] = np.sum(integrand[i, :-1] * DY_thresh[j, :])
-
-        K[idx] = -np.sum(np.multiply(Sigma_inv, integral))
-        for c in range(C):
-            for r in range(R_L[k]):
-                K[idx + c * R_L[k] + r + 1] = -np.sum(np.multiply(np.matmul(np.multiply(W_C[c], A[r]).T, Sigma_inv), integral))
-        idx += C * R_L[k] + 1
-
-    # compute [K]
-    KK = np.zeros((p + sum(R_L) * C, p + sum(R_L) * C))
-    idx_k = 0
-    for k in range(p):
-        idx_l = 0
-        for l in range(p):
-            if k == 0:
-                integrand_one = X[-d:, :]
-            else:
-                integrand_one = X[-d-k*d:-k*d, :]
-            if l == 0:
-                integrand_two = X[-d:, :]
-            else:
-                integrand_two = X[-d-l*d:-l*d, :]
+    if is_global:
+        K = np.zeros(p + sum(R_L) * C)
+        idx = 0
+        for k in range(p):
             integral = np.zeros((d, d))
+            if k == 0:
+                integrand = X[-d:, :]
+            else:
+                integrand = X[-d-k*d:-k*d, :]
             for i in range(d):
                 for j in range(d):
-                    # left-hand Riemann sum (converges a.s. to Riemann Integral, for any choice of mid-point)
-                    integral[i, j] = np.sum(integrand_one[i, :-1] * integrand_two[j, :-1] * (Q[1:] - Q[:-1]))
-            KK[idx_k, idx_l] = np.sum(np.multiply(Sigma_inv, integral))
+                    # left-hand Riemann sum (converges in L2 to Ito Integral)
+                    integral[i, j] = np.sum(integrand[i, :-1] * DY_thresh[j, :])
+
+            K[idx] = -np.sum(np.multiply(Sigma_inv, integral))
             for c in range(C):
                 for r in range(R_L[k]):
-                    KK[idx_k + c * R_L[k] + r + 1, idx_l] = np.sum(np.multiply(np.matmul(np.multiply(W_C[c], A[r]).T, Sigma_inv), integral))
-            for e in range(C):
-                for s in range(R_L[l]):
-                    KK[idx_k, idx_l + e * R_L[l] + s + 1] = np.sum(np.multiply(np.matmul(Sigma_inv, np.multiply(W_C[e], A[s])), integral))
-            for c in range(C):
-                for r in range(R_L[k]):
-                    for e in range(C):
-                        for s in range(R_L[l]):
-                            KK[idx_k + c * R_L[k] + r + 1, idx_l + e * R_L[l] + s + 1] = np.sum(np.multiply(np.matmul(np.matmul(np.multiply(W_C[c], A[r]).T, Sigma_inv), np.multiply(W_C[e], A[s])), integral))
-            idx_l += C * R_L[l] + 1
-        idx_k += C * R_L[k] + 1
+                    K[idx + c * R_L[k] + r + 1] = -np.sum(np.multiply(np.matmul(np.multiply(W_C[c], A[r]).T, Sigma_inv), integral))
+            idx += C * R_L[k] + 1
+
+        # compute [K]
+        KK = np.zeros((p + sum(R_L) * C, p + sum(R_L) * C))
+        idx_k = 0
+        for k in range(p):
+            idx_l = 0
+            for l in range(p):
+                if k == 0:
+                    integrand_one = X[-d:, :]
+                else:
+                    integrand_one = X[-d-k*d:-k*d, :]
+                if l == 0:
+                    integrand_two = X[-d:, :]
+                else:
+                    integrand_two = X[-d-l*d:-l*d, :]
+                integral = np.zeros((d, d))
+                for i in range(d):
+                    for j in range(d):
+                        # left-hand Riemann sum (converges a.s. to Riemann Integral, for any choice of mid-point)
+                        integral[i, j] = np.sum(integrand_one[i, :-1] * integrand_two[j, :-1] * (Q[1:] - Q[:-1]))
+                KK[idx_k, idx_l] = np.sum(np.multiply(Sigma_inv, integral))
+                for c in range(C):
+                    for r in range(R_L[k]):
+                        KK[idx_k + c * R_L[k] + r + 1, idx_l] = np.sum(np.multiply(np.matmul(np.multiply(W_C[c], A[r]).T, Sigma_inv), integral))
+                for e in range(C):
+                    for s in range(R_L[l]):
+                        KK[idx_k, idx_l + e * R_L[l] + s + 1] = np.sum(np.multiply(np.matmul(Sigma_inv, np.multiply(W_C[e], A[s])), integral))
+                for c in range(C):
+                    for r in range(R_L[k]):
+                        for e in range(C):
+                            for s in range(R_L[l]):
+                                KK[idx_k + c * R_L[k] + r + 1, idx_l + e * R_L[l] + s + 1] = np.sum(np.multiply(np.matmul(np.matmul(np.multiply(W_C[c], A[r]).T, Sigma_inv), np.multiply(W_C[e], A[s])), integral))
+                idx_l += C * R_L[l] + 1
+            idx_k += C * R_L[k] + 1
+
+    else:
+        pass
+
+
+
 
     # compute and return theta_hat
     vec_theta_hat = np.matmul(np.linalg.pinv(KK), K)
@@ -573,7 +581,7 @@ def estimate_MCAR(
         theta_hat = estimate_OU_drift(Y, R_L, C, P, Q, b_hat, with_cov=False, is_global=is_global) if AA is None else AA
         AA_hat[:, idx, idx] = theta_hat
     elif Model == 'grOU':
-        global_AA_hat = estimate_grCAR_drift(Y, A, W_C, p, R_L, C, P, Q, b_hat) if AA is None else AA
+        global_AA_hat = estimate_grCAR_drift(Y, A, W_C, R_L, C, P, Q, b_hat) if AA is None else AA
         AA_hat = estimator_to_QQ(global_AA_hat, R_L, C, W_C, A, d)
     else:
         raise ValueError('Model not recognized')
@@ -607,7 +615,7 @@ def estimate_MCAR(
             theta_hat_new = estimate_OU_drift(Y, R_L, C, P, Q, b_hat, with_cov=False, is_global=is_global) if AA is None else AA
             AA_hat_new[:, idx, idx] = theta_hat_new
         elif Model == 'grOU':
-            global_AA_hat_new = estimate_grCAR_drift(Y, A, W_C, p, R_L, C, P, Q, b_hat) if AA is None else AA
+            global_AA_hat_new = estimate_grCAR_drift(Y, A, W_C, R_L, C, P, Q, b_hat) if AA is None else AA
             AA_hat_new = estimator_to_QQ(global_AA_hat_new, R_L, C, W_C, A, d)
         DeltaL = recover_BDLP(Y, p, P, Q, AA_hat_new)
         Sigma_hat = estimate_Sigma_L(DeltaL, Q) if Sigma is None else Sigma

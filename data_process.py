@@ -714,7 +714,7 @@ def NA_model(Y, test_set, forecast_step):
     print(f'RMSE for Naive model is: {RMSE_NA}')
 
 
-def OU_edge_model(Y, test_set, K, test_size, forecast_step, R_L, C, jump_activity, P_, Q_, method = 'naive', is_global = True):
+def OU_edge_model(Y, test_set, K, test_size, forecast_step, R_L, C, jump_activity, P_, Q_, method = 'naive', is_global = True, print_param = False):
     # OU Edge model
 
     forecast_OU = np.zeros((test_size, K, forecast_step))
@@ -797,7 +797,7 @@ def OU_edge_model(Y, test_set, K, test_size, forecast_step, R_L, C, jump_activit
         forecast_OU[i, :, :] = np.mean(np.array(paths), axis=0)
         df_OU = np.append(df_OU, test_set[i, :, 0:1], axis=1)
 
-    with open(os.path.join('data\\LOBSTERdata\\output\\train\\aggregate', f'forecast_OU_{len(R_L)}.npy'), 'wb') as f:
+    with open(os.path.join('data\\LOBSTERdata\\output\\train\\aggregate', f'forecast_OU_{len(R_L)}_{method}_global_{is_global}.npy'), 'wb') as f:
         np.save(f, forecast_OU)
 
     RMSE_OU = np.sqrt(np.mean((forecast_OU - test_set) ** 2))
@@ -808,9 +808,9 @@ def OU_edge_model(Y, test_set, K, test_size, forecast_step, R_L, C, jump_activit
     test_set_dir = np.sign(np.diff(np.append(last_, test_set, axis=2), axis=2))
     print(f'Direction success rate for OU({len(R_L)}) Edge model is: {(test_set_dir == forecast_OU_dir).mean()}')
 
-    return np.array(alphas_OU)
+    return np.array(alphas_OU) if print_param else None
 
-def grOU_edge_model(Y, Adj, test_set, K, test_size, forecast_step, R_L, C, jump_activity, P_, Q_, method = 'naive'):
+def grOU_edge_model(Y, Adj, test_set, K, test_size, forecast_step, R_L, C, jump_activity, P_, Q_, method = 'naive', is_global=True, print_param=False):
     # graph OU Edge model
 
     # Derive the adjacency matrix for edge graph
@@ -834,7 +834,7 @@ def grOU_edge_model(Y, Adj, test_set, K, test_size, forecast_step, R_L, C, jump_
 
     for i in range(test_size):
         window_data = df_grOU[:, i:]
-        theta_hat, HH, H = estimate_grCAR_drift(window_data, Adj_L, W_C, len(R_L), R_L, C, P_, Q_, b, None, Sigma, with_cov=True)
+        theta_hat, HH, H = estimate_grCAR_drift(window_data, Adj_L, W_C, R_L, C, P_, Q_, b, None, Sigma, with_cov=True, is_global=is_global)
 
         # Fetch parameters
         idx = 0
@@ -844,7 +844,7 @@ def grOU_edge_model(Y, Adj, test_set, K, test_size, forecast_step, R_L, C, jump_
             alpha_pred.append(theta_hat[idx])
             beta_pred.append(theta_hat[(idx + 1):(idx + 1 + r * C)])
             idx += 1 + r * C
-        X.alpha_set(alpha_pred)
+        X.alpha_set(np.repeat(np.array(alpha_pred)[:, None], K, axis=1))
         X.beta_set(beta_pred)
 
         try:
@@ -877,7 +877,7 @@ def grOU_edge_model(Y, Adj, test_set, K, test_size, forecast_step, R_L, C, jump_
                 alpha_pred.append(theta_hat[idx])
                 beta_pred.append(theta_hat[(idx + 1):(idx + 1 + r * C)])
                 idx += 1 + r * C
-            X.alpha_set(alpha_pred)
+            X.alpha_set(np.repeat(np.array(alpha_pred)[:, None], K, axis=1))
             X.beta_set(beta_pred)
             Q_Q = X.Q_matrix(False)
 
