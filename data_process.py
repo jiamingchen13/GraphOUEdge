@@ -714,14 +714,14 @@ def NA_model(Y, test_set, forecast_step):
     print(f'RMSE for Naive model is: {RMSE_NA}')
 
 
-def OU_edge_model(Y, test_set, K, test_size, forecast_step, R_L, C, jump_activity, P_, Q_, method = 'naive', is_global = True, print_param = False):
+def OU_edge_model(Y, test_set, K, test_size, forecast_step, R_L, C, jump_activity, P_, Q_, gamma, method = 'naive', is_global = True, print_param = False):
     # OU Edge model
 
     forecast_OU = np.zeros((test_size, K, forecast_step))
     df_OU = np.array(Y.copy())
     Adj_L_OU = [np.zeros((K, K)) for _ in range(max(R_L))]
     W_C_OU = edge_weight(Adj_L_OU)
-    X_OU = GraphOUEdge(R_L, K, C, Adj_L_OU, W_C_OU, 'data\\LOBSTERdata\\output\\train\\aggregate', 'plots')
+    X_OU = GraphOUEdge(R_L, K, C, Adj_L_OU, W_C_OU, gamma, 'data\\LOBSTERdata\\output\\train\\aggregate', 'plots')
     X_OU.estimate_unknown_Levy(Y, P_, Q_, 'OU',f'{jump_activity}')
     b_OU = np.load(f'./data/LOBSTERdata/output/train/aggregate/MCAR_estimates_b_{jump_activity}.npy')
     Sigma_OU = np.load(f'./data/LOBSTERdata/output/train/aggregate/MCAR_estimates_Sigma_{jump_activity}.npy')
@@ -731,9 +731,9 @@ def OU_edge_model(Y, test_set, K, test_size, forecast_step, R_L, C, jump_activit
     jump_F_OU = scipy.stats.multivariate_normal(mean=F_mean_OU, cov=(F_squared_OU - np.outer(F_mean_OU, F_mean_OU)), allow_singular=True)
     alphas_OU = []
 
-    for i in range(test_size):
+    for i in range(1):
         window_data = df_OU[:, i:]
-        theta_hat_OU, HH, H = estimate_OU_drift(window_data, R_L, C, P_, Q_, b_OU, None, Sigma_OU, with_cov=True, is_global=is_global)
+        theta_hat_OU, HH, H = estimate_OU_drift(window_data, R_L, C, P_, Q_, b_OU, gamma, None, Sigma_OU, with_cov=True, is_global=is_global)
         X_OU.alpha_set(theta_hat_OU)
         X_OU.beta_set([[0] * stage * C for stage in R_L])
         try:
@@ -771,7 +771,7 @@ def OU_edge_model(Y, test_set, K, test_size, forecast_step, R_L, C, jump_activit
             elif method == 'kalman':
                 # Kalman - filter
                 AA_hat = [np.diag([x] * K) for x in theta_hat_OU]
-                x0 = kalman_filter_mcar_BM(window_data, Q_Q, Sigma_OU, P_, Q_, AA_hat, 1.01)
+                x0 = kalman_filter_mcar_BM(window_data, Q_Q, Sigma_OU, P_, Q_, AA_hat, gamma)
                 x0[:K] = window_data[:, -1]
             else:
                 raise NotImplementedError("method must be among 'backward', 'naive' or 'kalman'.")
@@ -810,7 +810,7 @@ def OU_edge_model(Y, test_set, K, test_size, forecast_step, R_L, C, jump_activit
 
     return np.array(alphas_OU) if print_param else None
 
-def grOU_edge_model(Y, Adj, test_set, K, test_size, forecast_step, R_L, C, jump_activity, P_, Q_, method = 'naive', is_global=True, print_param=False):
+def grOU_edge_model(Y, Adj, test_set, K, test_size, forecast_step, R_L, C, jump_activity, P_, Q_, gamma, method = 'naive', is_global=True, print_param=False):
     # graph OU Edge model
 
     # Derive the adjacency matrix for edge graph
@@ -819,7 +819,7 @@ def grOU_edge_model(Y, Adj, test_set, K, test_size, forecast_step, R_L, C, jump_
     # Compute the edge weight
     W_C = edge_weight(Adj_L)
 
-    X = GraphOUEdge(R_L, K, C, Adj_L, W_C, 'data\\LOBSTERdata\\output\\train\\aggregate', 'plots')
+    X = GraphOUEdge(R_L, K, C, Adj_L, W_C, gamma, 'data\\LOBSTERdata\\output\\train\\aggregate', 'plots')
     X.estimate_unknown_Levy(Y, P_, Q_, 'grOU',f'{jump_activity}')
     b = np.load(f'./data/LOBSTERdata/output/train/aggregate/MCAR_estimates_b_{jump_activity}.npy')
     Sigma = np.load(f'./data/LOBSTERdata/output/train/aggregate/MCAR_estimates_Sigma_{jump_activity}.npy')
@@ -834,7 +834,7 @@ def grOU_edge_model(Y, Adj, test_set, K, test_size, forecast_step, R_L, C, jump_
 
     for i in range(test_size):
         window_data = df_grOU[:, i:]
-        theta_hat, HH, H = estimate_grCAR_drift(window_data, Adj_L, W_C, R_L, C, P_, Q_, b, None, Sigma, with_cov=True, is_global=is_global)
+        theta_hat, HH, H = estimate_grCAR_drift(window_data, Adj_L, W_C, R_L, C, P_, Q_, b, gamma, None, Sigma, with_cov=True, is_global=is_global)
 
         # Fetch parameters
         idx = 0
@@ -897,7 +897,7 @@ def grOU_edge_model(Y, Adj, test_set, K, test_size, forecast_step, R_L, C, jump_
             elif method == 'kalman':
                 # Kalman - filter
                 AA_hat = estimator_to_QQ(theta_hat, R_L, C, W_C, Adj_L, K)
-                x0 = kalman_filter_mcar_BM(window_data, Q_Q, Sigma, P_, Q_, AA_hat, 1.01)
+                x0 = kalman_filter_mcar_BM(window_data, Q_Q, Sigma, P_, Q_, AA_hat, gamma)
                 x0[:K] = window_data[:, -1]
             else:
                 raise NotImplementedError("method must be among 'backward', 'naive' or 'kalman'.")

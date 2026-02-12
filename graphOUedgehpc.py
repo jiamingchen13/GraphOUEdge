@@ -6,13 +6,14 @@ from mcar.estimate import *
 
 class GraphOUEdgehpc:
     """GraphOUEdge class under HPC environment."""
-    def __init__(self, R_L: np.ndarray, K: int, C: int, Adj: np.ndarray, W_C: np.ndarray, data_dir: str, plots_dir: str):
+    def __init__(self, R_L: np.ndarray, K: int, C: int, Adj: np.ndarray, W_C: np.ndarray, gamma: float, data_dir: str, plots_dir: str):
         self.L = len(R_L)  # Lags
         self.R_L = R_L  # Maximum stage for each Lag
         self.K = K  # Edges
         self.C = C  # Covariates
         self.Adj = Adj  # Adjacency matrices for different stages
         self.W_C = W_C  # Edge weights for Covariates
+        self.gamma = gamma
         self.alpha = np.zeros((self.L, K))    # Initialize standard autoregressive parameters
         self.beta = [[0] * stage * C for stage in R_L]  # Initialize network power parameters
         self.W = [[np.multiply(W_C[c], Adj[stage]) for c in range(C) for stage in range(R_i)] for R_i in R_L]  # Edge weights
@@ -161,7 +162,7 @@ class GraphOUEdgehpc:
                     nu = np.diff(Q_) ** beta
 
                     Y_ = Y[:, subset_P]
-                    theta_hat, KK, _ = estimate_grCAR_drift(Y_, self.Adj, self.W_C, self.L, self.R_L, self.C, P_, Q_, self.b, nu, self.Sigma, with_cov=True)
+                    theta_hat, KK, _ = estimate_grCAR_drift(Y_, self.Adj, self.W_C, self.L, self.R_L, self.C, P_, Q_, self.b, self.gamma, nu, self.Sigma, with_cov=True)
 
                     estimates[sample, n-1, :] = theta_hat
                     estimates_Cov[sample, n-1, :, :] = KK
@@ -172,7 +173,7 @@ class GraphOUEdgehpc:
             with open(os.path.join(self.data_dir, f'grCAR_{jump_regime}_estimates_Cov.npy'), 'wb') as f:
                 np.save(f, estimates_Cov)
 
-    def estimate_unknown_Levy(self, Y, jump_activity: str = 'infinite', is_global=True):
+    def estimate_unknown_Levy(self, Y, model, jump_activity: str = 'infinite', is_global=True):
         """Estimate and save the parameters of unknown Levy process."""
 
         n = int(np.floor((Y.shape[1] - 1) ** (1/7)))
@@ -181,19 +182,19 @@ class GraphOUEdgehpc:
         Q_ = P_[::n ** 4]  # delta_Q = n^(-2) = delta_P^(1/3) and delta_Q n -> 0
         Y_ = Y.iloc[:, :(n ** 7 + 1)]
 
-        QQ_hat, (b_hat, Sigma_hat) = estimate_MCAR(Y = Y_, P = P_, Q = Q_, A = self.Adj, W_C = self.W_C,
-                                                   R_L = self.R_L, C = self.C, jump_activity = jump_activity, is_global=is_global)
+        QQ_hat, (b_hat, Sigma_hat) = estimate_MCAR(Model=model, Y = Y_, P = P_, Q = Q_, A = self.Adj, W_C = self.W_C, R_L = self.R_L,
+                                                C = self.C, gamma= self.gamma, jump_activity = jump_activity, is_global=is_global)
         DeltaL = recover_BDLP(Y = Y_, p = self.L, P = P_, Q = Q_, AA = QQ_hat)
         if jump_activity == 'finite':
-            F_squared_hat = estimate_integral_Levy_measure(DeltaL, Q = Q_, Sigma = Sigma_hat, K = lambda x: True,
+            F_squared_hat = estimate_integral_Levy_measure(DeltaL, Q = Q_, gamma=self.gamma, Sigma = Sigma_hat, K = lambda x: True,
                                                            f = lambda x: np.outer(x, x))
 
-            F_mean_hat = estimate_integral_Levy_measure(DeltaL, Q = Q_, Sigma = Sigma_hat, K = lambda x: True, f = lambda x: x)
+            F_mean_hat = estimate_integral_Levy_measure(DeltaL, Q = Q_, gamma=self.gamma, Sigma = Sigma_hat, K = lambda x: True, f = lambda x: x)
         elif jump_activity == 'infinite':
-            F_squared_hat = estimate_integral_Levy_measure(DeltaL, Q = Q_, Sigma = Sigma_hat, K = lambda x: np.linalg.norm(x) > 1,
+            F_squared_hat = estimate_integral_Levy_measure(DeltaL, Q = Q_, gamma=self.gamma, Sigma = Sigma_hat, K = lambda x: np.linalg.norm(x) > 1e-3,
                                                            f = lambda x: np.outer(x, x))
 
-            F_mean_hat = estimate_integral_Levy_measure(DeltaL, Q = Q_, Sigma = Sigma_hat, K = lambda x: np.linalg.norm(x) > 1,
+            F_mean_hat = estimate_integral_Levy_measure(DeltaL, Q = Q_, gamma=self.gamma, Sigma = Sigma_hat, K = lambda x: np.linalg.norm(x) > 1e-3,
                                                            f = lambda x: x)
         else:
             raise ValueError("jump_activity must be 'finite' or 'infinite.")

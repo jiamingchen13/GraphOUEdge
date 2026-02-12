@@ -6,13 +6,14 @@ from mcar.simulate import *
 from mcar.estimate import *
 
 class GraphOUEdge:
-    def __init__(self, R_L: np.ndarray, K: int, C: int, Adj, W_C, data_dir: str, plots_dir: str):
+    def __init__(self, R_L: np.ndarray, K: int, C: int, Adj, W_C, gamma, data_dir: str, plots_dir: str):
         self.L = len(R_L)  # Lags
         self.R_L = R_L  # Maximum stage for each Lag
         self.K = K  # Edges
         self.C = C  # Covariates
         self.Adj = Adj  # Adjacency matrices for different stages
         self.W_C = W_C  # Edge weights for Covariates
+        self.gamma = gamma
         self.alpha = np.zeros((self.L, self.K))    # Initialize standard autoregressive parameters
         self.beta = [[0] * stage * C for stage in R_L]  # Initialize network power parameters
         self.W = [[np.multiply(W_C[c], Adj[stage]) for c in range(C) for stage in range(R_i)] for R_i in R_L]  # Edge weights
@@ -22,6 +23,7 @@ class GraphOUEdge:
         self.Sigma = np.eye(K)  # Initial Sigma in the Levy triplet
         self.jump_F = scipy.stats.multivariate_normal(mean=np.zeros(K), cov=np.eye(K))  # Initial jump distribution for finitely many jumps
         self.jumps = partial(gamma_increments, shape=1, scale=1, d=K)   # Initial jump increment function for infinitely many jumps
+
         self.log2T = 3  # Number of different time lengths
         self.T = 2 ** self.log2T # Total duration
         self.N = self.T ** 7 # Number of partitions
@@ -124,7 +126,7 @@ class GraphOUEdge:
             nu = np.diff(Q_) ** beta
 
             Y_ = Y[:, subset_P]
-            QQ_hat, HH = estimate_MCAR_drift(Y_, self.L, P_, Q_, self.b, nu, with_cov=True, Sigma=self.Sigma)
+            QQ_hat, HH = estimate_MCAR_drift(Y_, self.L, P_, Q_, self.b, self.gamma, nu, with_cov=True, Sigma=self.Sigma)
 
             estimates_sample[n - 1, :] = QQ_hat
             estimates_cov_sample[n - 1, :, :] = HH
@@ -176,7 +178,7 @@ class GraphOUEdge:
             nu = np.diff(Q_) ** beta
 
             Y_ = Y[:, subset_P]
-            theta_hat, KK, _ = estimate_grCAR_drift(Y_, self.Adj, self.W_C, self.L, self.R_L, self.C, P_, Q_, self.b, nu, self.Sigma, with_cov=True)
+            theta_hat, KK, _ = estimate_grCAR_drift(Y_, self.Adj, self.W_C, self.L, self.R_L, self.C, P_, Q_, self.b, self.gamma, nu, self.Sigma, with_cov=True)
 
             estimates_sample[n - 1, :] = theta_hat
             estimates_cov_sample[n - 1, :, :] = KK
@@ -215,15 +217,16 @@ class GraphOUEdge:
     def estimate_unknown_Levy(self, Y, P_, Q_, model, jump_activity: str = 'finite', is_global=True):
         """Estimate and save the parameters of unknown Levy process."""
 
-        QQ_hat, (b_hat, Sigma_hat) = estimate_MCAR(Model = model, Y=Y, P=P_, Q=Q_, A=self.Adj, W_C=self.W_C, R_L=self.R_L, C=self.C, jump_activity=jump_activity, is_global=is_global)
+        QQ_hat, (b_hat, Sigma_hat) = estimate_MCAR(Model = model, Y=Y, P=P_, Q=Q_, A=self.Adj, W_C=self.W_C, R_L=self.R_L,
+                                                   C=self.C, gamma=self.gamma, jump_activity=jump_activity, is_global=is_global)
         DeltaL = recover_BDLP(Y=Y, p=self.L, P=P_, Q=Q_, AA=QQ_hat)
 
         if jump_activity == 'finite':
-            F_mean_hat = estimate_integral_Levy_measure(DeltaL, Q=Q_, Sigma=Sigma_hat, K=lambda x: True, f=lambda x: x)
-            F_squared_hat = estimate_integral_Levy_measure(DeltaL, Q=Q_, Sigma=Sigma_hat, K=lambda x: True, f=lambda x: np.outer(x, x))
+            F_mean_hat = estimate_integral_Levy_measure(DeltaL, Q=Q_, gamma=self.gamma, Sigma=Sigma_hat, K=lambda x: True, f=lambda x: x)
+            F_squared_hat = estimate_integral_Levy_measure(DeltaL, Q=Q_, gamma=self.gamma, Sigma=Sigma_hat, K=lambda x: True, f=lambda x: np.outer(x, x))
         elif jump_activity == 'infinite':
-            F_mean_hat = estimate_integral_Levy_measure(DeltaL, Q=Q_, Sigma=Sigma_hat, K=lambda x: np.linalg.norm(x) > 1e-3, f=lambda x: x)
-            F_squared_hat = estimate_integral_Levy_measure(DeltaL, Q=Q_, Sigma=Sigma_hat, K=lambda x: np.linalg.norm(x) > 1e-3, f=lambda x: np.outer(x, x))
+            F_mean_hat = estimate_integral_Levy_measure(DeltaL, Q=Q_, gamma=self.gamma, Sigma=Sigma_hat, K=lambda x: np.linalg.norm(x) > 1e-3, f=lambda x: x)
+            F_squared_hat = estimate_integral_Levy_measure(DeltaL, Q=Q_, gamma=self.gamma, Sigma=Sigma_hat, K=lambda x: np.linalg.norm(x) > 1e-3, f=lambda x: np.outer(x, x))
         else:
             raise ValueError("jump_activity must be 'finite' or 'infinite.")
 
