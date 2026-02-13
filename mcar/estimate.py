@@ -213,7 +213,8 @@ def estimate_grCAR_drift(Y: np.ndarray, A, W_C, R_L: np.ndarray, C: int, P: np.n
         return vec_theta_hat
 
 def estimate_OU_drift(Y: np.ndarray, R_L: np.ndarray, C: int, P: np.ndarray, Q: np.ndarray, b: np.ndarray,
-                      gamma: float, nu: np.ndarray = None, Sigma: np.ndarray = None, with_cov: bool = False, is_global: bool = True):
+                      gamma: float, nu: np.ndarray = None, Sigma: np.ndarray = None, with_cov: bool = False,
+                      is_global: bool = True, is_single: bool = False):
     """
     Estimate OU drift parameters from the realisation of a process with driving Levy triplet (b, Sigma, F).
     Here the Levy drift parameter b corresponds to
@@ -230,15 +231,12 @@ def estimate_OU_drift(Y: np.ndarray, R_L: np.ndarray, C: int, P: np.ndarray, Q: 
     :param Sigma: covariance matrix of the driving Levy process, (d, d) np.ndarray
     :param with_cov: whether to return the vectorized estimator with its estimated covariance, bool
     :param is_global: whether to return the global estimator, bool
+    :param is_single: whether to use single partition grid to compute derivative and integral, bool
     :return if with_cov is True:
                 vec_theta_hat: vectorized estimated OU parameters
                 KK: estimated covariance of the estimated OU parameters
     """
-    # approximate the state space representation by finite differences over P
     p = len(R_L)
-    X = state_space(Y, p, P)
-
-    # approximate integrals on Q
     if not all([u in P for u in Q]):
         raise ValueError('P must be refinement of Q.')
     indices = [False] * len(P)
@@ -247,7 +245,15 @@ def estimate_OU_drift(Y: np.ndarray, R_L: np.ndarray, C: int, P: np.ndarray, Q: 
         if s == Q[j]:
             indices[i] = True
             j += 1
-    X = X[:, indices]
+
+    if is_single:
+        # approximate both the state space representation and integrals on Q
+        X = state_space(Y[:, indices], p, Q)
+    else:
+        # approximate the state space representation by finite differences over P
+        X = state_space(Y, p, P)
+        # approximate integrals on Q
+        X = X[:, indices]
 
     # get dimensions and time horizon
     d = Y.shape[0]
@@ -258,7 +264,7 @@ def estimate_OU_drift(Y: np.ndarray, R_L: np.ndarray, C: int, P: np.ndarray, Q: 
         Sigma_inv = np.linalg.pinv(Sigma)
     elif with_cov and Sigma is None:
         # estimate Sigma from data
-        theta_hat = estimate_OU_drift(Y, R_L, C, P, Q, b, gamma, with_cov=False, is_global=is_global)
+        theta_hat = estimate_OU_drift(Y, R_L, C, P, Q, b, gamma, with_cov=False, is_global=is_global, is_single=is_single)
         AA_hat = np.zeros((p, d, d))
         idx = np.arange(d)
         AA_hat[:, idx, idx] = theta_hat
@@ -538,7 +544,8 @@ def estimate_MCAR(
         mu: np.ndarray = None,
         jump_activity: str = 'infinite',
         mu_estimator: str = 'MCAR_mean',
-        is_global: bool = True
+        is_global: bool = True,
+        is_single: bool = False
     ):
     """
     Estimate MCAR parameters from the realisation of a MCAR process. Estimate both drift parameter and Levy triplet parameters (b, Sigma).
@@ -574,6 +581,7 @@ def estimate_MCAR(
     :param f: Levy measure component of drift parameter f:= \int_{|z|>1} z F(dz) or \int_{R^d} z F(dz), (d, ) np.ndarray
     :param mu: 'actual' drift of Levy process mu := E[L_1], (d, ) np.ndarray
     :param is_global: whether to return the global estimator, bool
+    :param is_single: whether to use single partition grid to compute derivative and integral, bool
     :return AA_hat: estimated MCAR drift parameters, list of p (d, d) np.ndarray
             b_hat: estimated driving Levy process drift parameter, (d, ) np.ndarray
             Sigma_hat: estimated driving Levy process covariance parameter, (d, ) np.ndarray
@@ -584,7 +592,7 @@ def estimate_MCAR(
     AA_hat = np.zeros((p, d, d))
     idx = np.arange(d)
     if Model == 'OU':
-        theta_hat = estimate_OU_drift(Y, R_L, C, P, Q, b_hat, gamma, with_cov=False, is_global=is_global) if AA is None else AA
+        theta_hat = estimate_OU_drift(Y, R_L, C, P, Q, b_hat, gamma, with_cov=False, is_global=is_global, is_single=is_single) if AA is None else AA
         AA_hat[:, idx, idx] = theta_hat
     elif Model == 'grOU':
         global_AA_hat = estimate_grCAR_drift(Y, A, W_C, R_L, C, P, Q, b_hat, gamma) if AA is None else AA
@@ -618,7 +626,7 @@ def estimate_MCAR(
     while not converged:
         n_iter += 1
         if Model == 'OU':
-            theta_hat_new = estimate_OU_drift(Y, R_L, C, P, Q, b_hat, gamma, with_cov=False, is_global=is_global) if AA is None else AA
+            theta_hat_new = estimate_OU_drift(Y, R_L, C, P, Q, b_hat, gamma, with_cov=False, is_global=is_global, is_single=is_single) if AA is None else AA
             AA_hat_new[:, idx, idx] = theta_hat_new
         elif Model == 'grOU':
             global_AA_hat_new = estimate_grCAR_drift(Y, A, W_C, R_L, C, P, Q, b_hat, gamma) if AA is None else AA

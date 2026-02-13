@@ -714,7 +714,8 @@ def NA_model(Y, test_set, forecast_step):
     print(f'RMSE for Naive model is: {RMSE_NA}')
 
 
-def OU_edge_model(Y, test_set, K, test_size, forecast_step, R_L, C, jump_activity, P_, Q_, gamma, method = 'naive', is_global = True, print_param = False):
+def OU_edge_model(Y, test_set, K, test_size, forecast_step, R_L, C, jump_activity, P_, Q_, gamma, method = 'naive',
+                  is_global = True, is_single = False, print_param = False):
     # OU Edge model
 
     forecast_OU = np.zeros((test_size, K, forecast_step))
@@ -733,7 +734,7 @@ def OU_edge_model(Y, test_set, K, test_size, forecast_step, R_L, C, jump_activit
 
     for i in range(1):
         window_data = df_OU[:, i:]
-        theta_hat_OU, HH, H = estimate_OU_drift(window_data, R_L, C, P_, Q_, b_OU, gamma, None, Sigma_OU, with_cov=True, is_global=is_global)
+        theta_hat_OU, HH, H = estimate_OU_drift(window_data, R_L, C, P_, Q_, b_OU, gamma, None, Sigma_OU, with_cov=True, is_global=is_global, is_single=is_single)
         X_OU.alpha_set(theta_hat_OU)
         X_OU.beta_set([[0] * stage * C for stage in R_L])
         try:
