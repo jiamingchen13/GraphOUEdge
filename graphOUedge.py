@@ -46,6 +46,9 @@ class GraphOUEdge:
     def beta_set(self, beta: List):
         self.beta = beta
 
+    def Q_get(self):
+        return self.Q
+
     def Q_matrix(self, strict: bool = True):
         """Compute state-transition matrix with given network structure and parameters."""
         self.Q = []

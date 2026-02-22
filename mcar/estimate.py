@@ -73,7 +73,8 @@ def estimate_MCAR_drift(Y: np.ndarray, p: int, P: np.ndarray, Q: np.ndarray, b: 
         return AA_hat
 
 def estimate_grCAR_drift(Y: np.ndarray, A, W_C, R_L: np.ndarray, C: int, P: np.ndarray, Q: np.ndarray, b: np.ndarray,
-                         gamma: float, nu: np.ndarray = None, Sigma: np.ndarray = None, with_cov: bool = False, is_global: bool = True):
+                         gamma: float, nu: np.ndarray = None, Sigma: np.ndarray = None, with_cov: bool = False, is_global: bool = True,
+                         is_single: bool = False):
     """
     Estimate grCAR drift parameters from the realisation of a grCAR process with driving Levy triplet (b, Sigma, F).
     Here the Levy drift parameter b corresponds to
@@ -92,15 +93,12 @@ def estimate_grCAR_drift(Y: np.ndarray, A, W_C, R_L: np.ndarray, C: int, P: np.n
     :param Sigma: Covariance matrix of the driving Levy process, (d, d) np.ndarray
     :param with_cov: whether to return the vectorized estimator with its estimated covariance, bool
     :param is_global: whether to return the global estimator, bool
+    :param is_single: whether to use single partition grid to compute derivative and integral, bool
     :return if with_cov is True:
                 vec_theta_hat: vectorized estimated grCAR parameters, (p + sum(R_L) * C, ) np.ndarray
                 KK: estimated covariance of the estimated grCAR parameters, (p + sum(R_L) * C, p + sum(R_L) * C) np.ndarray
     """
-    # approximate the state space representation by finite differences over P
     p = len(R_L)
-    X = state_space(Y, p, P)
-
-    # approximate integrals on Q
     if not all([u in P for u in Q]):
         raise ValueError('P must be refinement of Q.')
     indices = [False] * len(P)
@@ -109,7 +107,15 @@ def estimate_grCAR_drift(Y: np.ndarray, A, W_C, R_L: np.ndarray, C: int, P: np.n
         if s == Q[j]:
             indices[i] = True
             j += 1
-    X = X[:, indices]
+
+    if is_single:
+        # approximate both the state space representation and integrals on Q
+        X = state_space(Y[:, indices], p, Q)
+    else:
+        # approximate the state space representation by finite differences over P
+        X = state_space(Y, p, P)
+        # approximate integrals on Q
+        X = X[:, indices]
 
     # get dimensions and time horizon
     d = Y.shape[0]
@@ -196,14 +202,83 @@ def estimate_grCAR_drift(Y: np.ndarray, A, W_C, R_L: np.ndarray, C: int, P: np.n
                 idx_l += C * R_L[l] + 1
             idx_k += C * R_L[k] + 1
 
+        # compute and return theta_hat
+        vec_theta_hat = np.matmul(np.linalg.pinv(KK), K)
+        vec_theta_hat_ext = np.zeros(p * d + sum(R_L) * C)
+
+        idx_old = 0
+        idx_new = 0
+        for k in range(p):
+            # number of local scalars at lag k
+            Lk = int(C * R_L[k])
+
+            # 1) duplicate baseline_k d times
+            vec_theta_hat_ext[idx_new: idx_new + d] = vec_theta_hat[idx_old]
+
+            # 2) copy locals for lag k
+            vec_theta_hat_ext[idx_new + d: idx_new + d + Lk] = vec_theta_hat[idx_old + 1: idx_old + 1 + Lk]
+
+            # advance indices
+            idx_old += 1 + Lk
+            idx_new += d + Lk
+        vec_theta_hat = vec_theta_hat_ext
+
     else:
-        pass
+        K = np.zeros(p * d + sum(R_L) * C)
+        idx = 0
+        for k in range(p):
+            if k == 0:
+                integrand = X[-d:, :]
+            else:
+                integrand = X[-d-k*d:-k*d, :]
+            integral_ = integrand[:, :-1] @ DY_thresh.T
+            for i in range(d):
+                integral = np.zeros(d)
+                integrand_row = integrand[i, :]
+                for j in range(d):
+                    # left-hand Riemann sum (converges in L2 to Ito Integral)
+                    integral[j] = np.sum(integrand_row[:-1] * DY_thresh[j, :])
+                K[idx + i] = - np.matmul(Sigma_inv, integral)[i]
+            base_offset = idx + d
+            for c in range(C):
+                for r in range(R_L[k]):
+                    K[base_offset + c * R_L[k] + r] = -np.sum(np.multiply(np.matmul(np.multiply(W_C[c], A[r]).T, Sigma_inv), integral_))
+            idx += C * R_L[k] + d
 
+        KK = np.zeros((p * d + sum(R_L) * C, p * d + sum(R_L) * C))
+        idx_k = 0
+        for k in range(p):
+            if k == 0:
+                integrand_one = X[-d:, :]
+            else:
+                integrand_one = X[-d - k * d:-k * d, :]
+            idx_l = 0
+            for l in range(p):
+                if l == 0:
+                    integrand_two = X[-d:, :]
+                else:
+                    integrand_two = X[-d - l * d:-l * d, :]
+                integral = (integrand_one[:, :-1] * (Q[1:] - Q[:-1])) @ integrand_two[:, :-1].T
+                KK[idx_k: idx_k + d, idx_l: idx_l + d] = np.multiply(Sigma_inv, integral)
+                for c in range(C):
+                    for r in range(R_L[k]):
+                        KK[idx_k + c * R_L[k] + r + d, idx_l: idx_l + d] = np.sum(
+                            np.multiply(np.matmul(np.multiply(W_C[c], A[r]).T, Sigma_inv), integral), axis=0)
+                for e in range(C):
+                    for s in range(R_L[l]):
+                        KK[idx_k: idx_k + d, idx_l + e * R_L[l] + s + d] = np.sum(
+                            np.multiply(np.matmul(Sigma_inv, np.multiply(W_C[e], A[s])), integral), axis=1)
+                for c in range(C):
+                    for r in range(R_L[k]):
+                        for e in range(C):
+                            for s in range(R_L[l]):
+                                KK[idx_k + c * R_L[k] + r + d, idx_l + e * R_L[l] + s + d] = np.sum(np.multiply(
+                                    np.matmul(np.matmul(np.multiply(W_C[c], A[r]).T, Sigma_inv),
+                                              np.multiply(W_C[e], A[s])), integral))
+                idx_l += C * R_L[l] + d
+            idx_k += C * R_L[k] + d
 
-
-
-    # compute and return theta_hat
-    vec_theta_hat = np.matmul(np.linalg.pinv(KK), K)
+        vec_theta_hat = np.matmul(np.linalg.pinv(KK), K)
 
     if with_cov and Sigma is not None:
         return vec_theta_hat, KK, K
@@ -212,7 +287,7 @@ def estimate_grCAR_drift(Y: np.ndarray, A, W_C, R_L: np.ndarray, C: int, P: np.n
     else:
         return vec_theta_hat
 
-def estimate_OU_drift(Y: np.ndarray, R_L: np.ndarray, C: int, P: np.ndarray, Q: np.ndarray, b: np.ndarray,
+def estimate_OU_drift(Y: np.ndarray, R_L: List, C: int, P: np.ndarray, Q: np.ndarray, b: np.ndarray,
                       gamma: float, nu: np.ndarray = None, Sigma: np.ndarray = None, with_cov: bool = False,
                       is_global: bool = True, is_single: bool = False):
     """

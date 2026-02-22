@@ -737,26 +737,7 @@ def OU_edge_model(Y, test_set, K, test_size, forecast_step, R_L, C, jump_activit
         theta_hat_OU, HH, H = estimate_OU_drift(window_data, R_L, C, P_, Q_, b_OU, gamma, None, Sigma_OU, with_cov=True, is_global=is_global, is_single=is_single)
         X_OU.alpha_set(theta_hat_OU)
         X_OU.beta_set([[0] * stage * C for stage in R_L])
-        try:
-            Q_Q = X_OU.Q_matrix(False)
-        except:
-            if is_global:
-                # for l = 1 or 2
-                if len(R_L) < 3:
-                    theta_hat_OU = minimize(lambda x: -np.matmul(x, H) + 0.5 * np.matmul(x, np.matmul(HH, x)), theta_hat_OU,
-                                            bounds=[(0.0, None)] * theta_hat_OU.shape[0] * theta_hat_OU.shape[1], method='L-BFGS-B').x
-                # for l >= 3
-                else:
-                    n = len(theta_hat_OU)
-                    hurwitz_constraint = NonlinearConstraint(hurwitz_principal_minors, lb=np.full(n, 1e-16), ub=np.full(n, np.inf))
-                    theta_hat_OU = minimize(lambda x: -np.matmul(x, H) + 0.5 * np.matmul(x, np.matmul(HH, x)),
-                                            np.clip(theta_hat_OU, np.zeros(n), np.full(n, np.inf)),
-                                            bounds=Bounds(lb=np.zeros(n), ub=np.full(n, np.inf), keep_feasible=True),
-                                            constraints=[hurwitz_constraint], method='trust-constr').x
-                X_OU.alpha_set(theta_hat_OU)
-                X_OU.beta_set([[0] * stage * C for stage in R_L])
-                Q_Q = X_OU.Q_matrix(False)
-
+        Q_Q = X_OU.Q_matrix(False)
         alphas_OU.append(theta_hat_OU)
 
         if len(R_L) == 1:
@@ -811,7 +792,8 @@ def OU_edge_model(Y, test_set, K, test_size, forecast_step, R_L, C, jump_activit
 
     return np.array(alphas_OU) if print_param else None
 
-def grOU_edge_model(Y, Adj, test_set, K, test_size, forecast_step, R_L, C, jump_activity, P_, Q_, gamma, method = 'naive', is_global=True, print_param=False):
+def grOU_edge_model(Y, Adj, test_set, K, test_size, forecast_step, R_L, C, jump_activity, P_, Q_, gamma, method = 'naive',
+                    is_global=True, is_single = False, print_param=False):
     # graph OU Edge model
 
     # Derive the adjacency matrix for edge graph
@@ -830,60 +812,26 @@ def grOU_edge_model(Y, Adj, test_set, K, test_size, forecast_step, R_L, C, jump_
     forecast_grOU = np.zeros((test_size, K, forecast_step))
     df_grOU = np.array(Y.copy())
     jump_F = scipy.stats.multivariate_normal(mean=F_mean, cov=(F_squared - np.outer(F_mean, F_mean)), allow_singular=True)
-    # alphas = []
-    # betas = []
+    alphas = []
+    betas = []
 
     for i in range(test_size):
         window_data = df_grOU[:, i:]
-        theta_hat, HH, H = estimate_grCAR_drift(window_data, Adj_L, W_C, R_L, C, P_, Q_, b, gamma, None, Sigma, with_cov=True, is_global=is_global)
+        theta_hat, HH, H = estimate_grCAR_drift(window_data, Adj_L, W_C, R_L, C, P_, Q_, b, gamma, None, Sigma, with_cov=True, is_global=is_global, is_single=is_single)
 
         # Fetch parameters
         idx = 0
         alpha_pred = []
         beta_pred = []
         for r in R_L:
-            alpha_pred.append(theta_hat[idx])
-            beta_pred.append(theta_hat[(idx + 1):(idx + 1 + r * C)])
-            idx += 1 + r * C
-        X.alpha_set(np.repeat(np.array(alpha_pred)[:, None], K, axis=1))
+            alpha_pred.append(theta_hat[idx : idx + K])
+            beta_pred.append(theta_hat[(idx + K):(idx + K + r * C)])
+            idx += K + r * C
+        X.alpha_set(np.array(alpha_pred))
         X.beta_set(beta_pred)
-
-        try:
-            Q_Q = X.Q_matrix()
-        except:
-            x = cp.Variable(len(R_L) + sum(R_L))
-
-            # Objective function
-            objective = cp.Minimize(-H.T @ x + 0.5 * cp.quad_form(x, HH))
-
-            # Constraint: the symmetric part of Q_Q is negative definite
-            epsilon = 0
-            constraints = [estimator_to_QQ_cp(x, R_L, C, W_C, Adj_L, K) << -epsilon * np.eye(len(R_L) * K)]
-
-            # Problem setup
-            prob = cp.Problem(objective, constraints)
-            try:
-                prob.solve(solver=cp.CVXOPT)
-                theta_hat = x.value
-                if theta_hat is None:
-                    prob.solve(solver=cp.SCS)
-                    theta_hat = x.value
-            except:
-                prob.solve(solver=cp.SCS)
-                theta_hat = x.value
-            idx = 0
-            alpha_pred = []
-            beta_pred = []
-            for r in R_L:
-                alpha_pred.append(theta_hat[idx])
-                beta_pred.append(theta_hat[(idx + 1):(idx + 1 + r * C)])
-                idx += 1 + r * C
-            X.alpha_set(np.repeat(np.array(alpha_pred)[:, None], K, axis=1))
-            X.beta_set(beta_pred)
-            Q_Q = X.Q_matrix(False)
-
-        # alphas.append(alpha_pred)
-        # betas.append(beta_pred)
+        Q_Q = X.Q_matrix(False)
+        alphas.append(alpha_pred)
+        betas.append(beta_pred)
 
         if len(R_L) == 1:
             x0 = window_data[:, -1]
@@ -934,3 +882,5 @@ def grOU_edge_model(Y, Adj, test_set, K, test_size, forecast_step, R_L, C, jump_
     forecast_grOU_dir = np.sign(np.diff(np.append(last_, forecast_grOU, axis=2), axis=2))
     test_set_dir = np.sign(np.diff(np.append(last_, test_set, axis=2), axis=2))
     print(f'Direction success rate for graph OU({len(R_L)}_{R_L}) Edge model is: {(test_set_dir == forecast_grOU_dir).mean()}')
+
+    return np.array([alphas, betas]) if print_param else None
