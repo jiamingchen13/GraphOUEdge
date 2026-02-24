@@ -732,7 +732,7 @@ def OU_edge_model(Y, test_set, K, test_size, forecast_step, R_L, C, jump_activit
     jump_F_OU = scipy.stats.multivariate_normal(mean=F_mean_OU, cov=(F_squared_OU - np.outer(F_mean_OU, F_mean_OU)), allow_singular=True)
     alphas_OU = []
 
-    for i in range(1):
+    for i in range(test_size):
         window_data = df_OU[:, i:]
         theta_hat_OU, HH, H = estimate_OU_drift(window_data, R_L, C, P_, Q_, b_OU, gamma, None, Sigma_OU, with_cov=True, is_global=is_global, is_single=is_single)
         X_OU.alpha_set(theta_hat_OU)
@@ -815,7 +815,7 @@ def grOU_edge_model(Y, Adj, test_set, K, test_size, forecast_step, R_L, C, jump_
     alphas = []
     betas = []
 
-    for i in range(test_size):
+    for i in range(1):
         window_data = df_grOU[:, i:]
         theta_hat, HH, H = estimate_grCAR_drift(window_data, Adj_L, W_C, R_L, C, P_, Q_, b, gamma, None, Sigma, with_cov=True, is_global=is_global, is_single=is_single)
 
@@ -883,4 +883,4 @@ def grOU_edge_model(Y, Adj, test_set, K, test_size, forecast_step, R_L, C, jump_
     test_set_dir = np.sign(np.diff(np.append(last_, test_set, axis=2), axis=2))
     print(f'Direction success rate for graph OU({len(R_L)}_{R_L}) Edge model is: {(test_set_dir == forecast_grOU_dir).mean()}')
 
-    return np.array([alphas, betas]) if print_param else None
+    return [alphas, betas] if print_param else None

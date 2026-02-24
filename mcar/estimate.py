@@ -72,7 +72,7 @@ def estimate_MCAR_drift(Y: np.ndarray, p: int, P: np.ndarray, Q: np.ndarray, b: 
         AA_hat = inv_vectorize_AA(vec_AA_hat, p)
         return AA_hat
 
-def estimate_grCAR_drift(Y: np.ndarray, A, W_C, R_L: np.ndarray, C: int, P: np.ndarray, Q: np.ndarray, b: np.ndarray,
+def estimate_grCAR_drift(Y: np.ndarray, A, W_C, R_L: List, C: int, P: np.ndarray, Q: np.ndarray, b: np.ndarray,
                          gamma: float, nu: np.ndarray = None, Sigma: np.ndarray = None, with_cov: bool = False, is_global: bool = True,
                          is_single: bool = False):
     """
