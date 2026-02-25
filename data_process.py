@@ -773,7 +773,7 @@ def OU_edge_model(Y, test_set, K, test_size, forecast_step, R_L, C, jump_activit
             )[:, 1:]
 
         paths = Parallel(n_jobs=-1)(
-            delayed(run_single_simulation)() for _ in range(1000)
+            delayed(run_single_simulation)() for _ in range(10000)
         )
 
         forecast_OU[i, :, :] = np.mean(np.array(paths), axis=0)
@@ -793,7 +793,7 @@ def OU_edge_model(Y, test_set, K, test_size, forecast_step, R_L, C, jump_activit
     return np.array(alphas_OU) if print_param else None
 
 def grOU_edge_model(Y, Adj, test_set, K, test_size, forecast_step, R_L, C, jump_activity, P_, Q_, gamma, method = 'naive',
-                    is_global=True, is_single = False, print_param=False):
+                    is_global=True, is_single = False, print_param=False, is_test=False):
     # graph OU Edge model
 
     # Derive the adjacency matrix for edge graph
@@ -815,7 +815,10 @@ def grOU_edge_model(Y, Adj, test_set, K, test_size, forecast_step, R_L, C, jump_
     alphas = []
     betas = []
 
-    for i in range(1):
+    if is_test:
+        test_size = 1
+
+    for i in range(test_size):
         window_data = df_grOU[:, i:]
         theta_hat, HH, H = estimate_grCAR_drift(window_data, Adj_L, W_C, R_L, C, P_, Q_, b, gamma, None, Sigma, with_cov=True, is_global=is_global, is_single=is_single)
 
@@ -864,10 +867,10 @@ def grOU_edge_model(Y, Adj, test_set, K, test_size, forecast_step, R_L, C, jump_
                 jump_F,
                 uniform=True
             )[:, 1:]
-
-        paths = Parallel(n_jobs=-1)(
-            delayed(run_single_simulation)() for _ in range(1000)
-        )
+        if is_test:
+            paths = Parallel(n_jobs=-1)(delayed(run_single_simulation)() for _ in range(1))
+        else:
+            paths = Parallel(n_jobs=-1)(delayed(run_single_simulation)() for _ in range(10000))
 
         forecast_grOU[i, :, :] = np.mean(np.array(paths), axis=0)
         df_grOU = np.append(df_grOU, test_set[i, :, 0:1], axis=1)
