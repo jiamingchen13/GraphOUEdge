@@ -706,6 +706,8 @@ def estimate_MCAR(
         elif Model == 'grOU':
             global_AA_hat_new = estimate_grCAR_drift(Y, A, W_C, R_L, C, P, Q, b_hat, gamma) if AA is None else AA
             AA_hat_new = estimator_to_QQ(global_AA_hat_new, R_L, C, W_C, A, d)
+        else:
+            raise ValueError('Model not recognized')
         DeltaL = recover_BDLP(Y, p, P, Q, AA_hat_new)
         Sigma_hat = estimate_Sigma_L(DeltaL, Q, gamma) if Sigma is None else Sigma
         if mu_estimator == 'Levy_slope':
@@ -719,7 +721,7 @@ def estimate_MCAR(
         b_hat = mu_hat - f_hat if b is None else b
 
         converged = np.sum([np.linalg.norm(AA_hat_new[i] - AA_hat[i]) for i in range(p)]) <= epsilon
-        AA_hat = AA_hat_new
+        AA_hat = AA_hat_new.copy()
 
         if n_iter >= max_iter:
             converged = True
@@ -734,7 +736,7 @@ def estimate_MCAR(
             b_hat = np.mean(np.array(bs)[index:, :], axis = 0)
             Sigma_hat = np.mean(np.array(Sigmas)[index:, :, :], axis = 0)
         else:
-            AAs.append(AA_hat)
+            AAs.append(AA_hat.copy())
             bs.append(b_hat)
             Sigmas.append(Sigma_hat)
     return AA_hat, (b_hat, Sigma_hat)
