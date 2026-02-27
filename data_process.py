@@ -448,6 +448,7 @@ def log_data_to_corr_data(path: str, rule: str, delta = .6, theta = 1, is_corr =
         np.savez(path + 'cov.npz', timestamps=corr_data.index,
                  **{col: corr_data[col].values for col in corr_data.columns})
 
+
 def hurwitz_principal_minors(a):
     #a = [a_1, a_2,..., a_l] length l
     n = len(a)
@@ -715,7 +716,7 @@ def NA_model(Y, test_set, forecast_step):
 
 
 def OU_edge_model(Y, test_set, K, test_size, forecast_step, R_L, C, jump_activity, P_, Q_, gamma, method = 'naive',
-                  is_global = True, is_single = False, print_param = False):
+                  is_global = True, is_single = False, print_param = False, is_test=False):
     # OU Edge model
 
     forecast_OU = np.zeros((test_size, K, forecast_step))
@@ -731,6 +732,9 @@ def OU_edge_model(Y, test_set, K, test_size, forecast_step, R_L, C, jump_activit
 
     jump_F_OU = scipy.stats.multivariate_normal(mean=F_mean_OU, cov=(F_squared_OU - np.outer(F_mean_OU, F_mean_OU)), allow_singular=True)
     alphas_OU = []
+
+    if is_test:
+        test_size = 1
 
     for i in range(test_size):
         window_data = df_OU[:, i:]
@@ -772,9 +776,12 @@ def OU_edge_model(Y, test_set, K, test_size, forecast_step, R_L, C, jump_activit
                 uniform=True
             )[:, 1:]
 
-        paths = Parallel(n_jobs=-1)(
-            delayed(run_single_simulation)() for _ in range(10000)
-        )
+        if is_test:
+            paths = Parallel(n_jobs=-1)(delayed(run_single_simulation)() for _ in range(1))
+        else:
+            paths = Parallel(n_jobs=-1)(
+            delayed(run_single_simulation)() for _ in range(1000)
+            )
 
         forecast_OU[i, :, :] = np.mean(np.array(paths), axis=0)
         df_OU = np.append(df_OU, test_set[i, :, 0:1], axis=1)
@@ -870,7 +877,7 @@ def grOU_edge_model(Y, Adj, test_set, K, test_size, forecast_step, R_L, C, jump_
         if is_test:
             paths = Parallel(n_jobs=-1)(delayed(run_single_simulation)() for _ in range(1))
         else:
-            paths = Parallel(n_jobs=-1)(delayed(run_single_simulation)() for _ in range(10000))
+            paths = Parallel(n_jobs=-1)(delayed(run_single_simulation)() for _ in range(1000))
 
         forecast_grOU[i, :, :] = np.mean(np.array(paths), axis=0)
         df_grOU = np.append(df_grOU, test_set[i, :, 0:1], axis=1)
