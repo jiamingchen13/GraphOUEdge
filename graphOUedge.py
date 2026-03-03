@@ -25,7 +25,7 @@ class GraphOUEdge:
         self.jumps = partial(gamma_increments, shape=1, scale=1, d=K)   # Initial jump increment function for infinitely many jumps
 
         self.log2T = 3  # Number of different time lengths
-        self.T = 2 ** self.log2T # Total duration
+        self.T = 3 # Total duration
         self.N = self.T ** 7 # Number of partitions
         self.P = np.linspace(0, self.T, self.N + 1)  # delta_P = T^(-6)
         self.data_dir = data_dir
