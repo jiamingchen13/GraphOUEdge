@@ -727,10 +727,6 @@ def OU_edge_model(Y, test_set, K, test_size, forecast_step, R_L, C, jump_activit
     X_OU.estimate_unknown_Levy(Y, P_, Q_, 'OU',f'{jump_activity}')
     b_OU = np.load(f'./data/LOBSTERdata/output/train/aggregate/MCAR_estimates_b_{jump_activity}.npy')
     Sigma_OU = np.load(f'./data/LOBSTERdata/output/train/aggregate/MCAR_estimates_Sigma_{jump_activity}.npy')
-    F_mean_OU = np.load(f'./data/LOBSTERdata/output/train/aggregate/MCAR_estimates_F_mean_{jump_activity}.npy')
-    F_squared_OU = np.load(f'./data/LOBSTERdata/output/train/aggregate/MCAR_estimates_F_squared_{jump_activity}.npy')
-
-    jump_F_OU = scipy.stats.multivariate_normal(mean=F_mean_OU, cov=(F_squared_OU - np.outer(F_mean_OU, F_mean_OU)), allow_singular=True)
     alphas_OU = []
 
     if is_test:
@@ -762,28 +758,24 @@ def OU_edge_model(Y, test_set, K, test_size, forecast_step, R_L, C, jump_activit
             else:
                 raise NotImplementedError("method must be among 'backward', 'naive' or 'kalman'.")
 
-        # Make predictions
-        def run_single_simulation():
-            """Wrapper function for single simulation"""
-            return simulate_MCAR_compound_poisson(
-                [j * (P_[1] - P_[0]) for j in range(forecast_step + 1)],
-                Q_Q,
-                x0,
-                b_OU,
-                Sigma_OU,
-                1.0,
-                jump_F_OU,
-                uniform=True
-            )[:, 1:]
+        # make prediction
+        # compute noise coefficient E, Sigma_tilde
+        E = np.zeros([K * len(R_L), K])
+        E[-K:, :] = np.eye(K)
 
-        if is_test:
-            paths = Parallel(n_jobs=-1)(delayed(run_single_simulation)() for _ in range(1))
-        else:
-            paths = Parallel(n_jobs=-1)(
-            delayed(run_single_simulation)() for _ in range(1000)
-            )
+        # initialize
+        X = np.zeros([K * len(R_L), forecast_step + 1])
+        X[:, 0] = x0
 
-        forecast_OU[i, :, :] = np.mean(np.array(paths), axis=0)
+        # precompute for speed-up
+        eA = scipy.linalg.expm(Q_Q)
+        A_inv = np.linalg.pinv(Q_Q)
+        eAt = scipy.linalg.fractional_matrix_power(eA, P_[1] - P_[0]).real
+
+        for n in range(forecast_step):
+            X[:, n + 1] = eAt.dot(X[:, n]) + (eAt - np.eye(K * len(R_L))).dot(A_inv).dot(E).dot(b_OU)
+
+        forecast_OU[i, :, :] = np.array(X[:K, 1:])
         df_OU = np.append(df_OU, test_set[i, :, 0:1], axis=1)
 
     with open(os.path.join('data\\LOBSTERdata\\output\\train\\aggregate', f'forecast_OU_{len(R_L)}_{method}_global_{is_global}.npy'), 'wb') as f:
@@ -813,12 +805,8 @@ def grOU_edge_model(Y, Adj, test_set, K, test_size, forecast_step, R_L, C, jump_
     X.estimate_unknown_Levy(Y, P_, Q_, 'grOU',f'{jump_activity}')
     b = np.load(f'./data/LOBSTERdata/output/train/aggregate/MCAR_estimates_b_{jump_activity}.npy')
     Sigma = np.load(f'./data/LOBSTERdata/output/train/aggregate/MCAR_estimates_Sigma_{jump_activity}.npy')
-    F_mean = np.load(f'./data/LOBSTERdata/output/train/aggregate/MCAR_estimates_F_mean_{jump_activity}.npy')
-    F_squared = np.load(f'./data/LOBSTERdata/output/train/aggregate/MCAR_estimates_F_squared_{jump_activity}.npy')
-
     forecast_grOU = np.zeros((test_size, K, forecast_step))
     df_grOU = np.array(Y.copy())
-    jump_F = scipy.stats.multivariate_normal(mean=F_mean, cov=(F_squared - np.outer(F_mean, F_mean)), allow_singular=True)
     alphas = []
     betas = []
 
@@ -861,25 +849,24 @@ def grOU_edge_model(Y, Adj, test_set, K, test_size, forecast_step, R_L, C, jump_
             else:
                 raise NotImplementedError("method must be among 'backward', 'naive' or 'kalman'.")
 
-        # Make predictions
-        def run_single_simulation():
-            """Wrapper function for single simulation"""
-            return simulate_MCAR_compound_poisson(
-                [j * (P_[1] - P_[0]) for j in range(forecast_step + 1)],
-                Q_Q,
-                x0,
-                b,
-                Sigma,
-                1.0,
-                jump_F,
-                uniform=True
-            )[:, 1:]
-        if is_test:
-            paths = Parallel(n_jobs=-1)(delayed(run_single_simulation)() for _ in range(1))
-        else:
-            paths = Parallel(n_jobs=-1)(delayed(run_single_simulation)() for _ in range(1000))
+        # make prediction
+        # compute noise coefficient E, Sigma_tilde
+        E = np.zeros([K * len(R_L), K])
+        E[-K:, :] = np.eye(K)
 
-        forecast_grOU[i, :, :] = np.mean(np.array(paths), axis=0)
+        # initialize
+        X_ = np.zeros([K * len(R_L), forecast_step + 1])
+        X_[:, 0] = x0
+
+        # precompute for speed-up
+        eA = scipy.linalg.expm(Q_Q)
+        A_inv = np.linalg.pinv(Q_Q)
+        eAt = scipy.linalg.fractional_matrix_power(eA, P_[1] - P_[0]).real
+
+        for n in range(forecast_step):
+            X_[:, n + 1] = eAt.dot(X_[:, n]) + (eAt - np.eye(K * len(R_L))).dot(A_inv).dot(E).dot(b)
+
+        forecast_grOU[i, :, :] = np.array(X_[:K, 1:])
         df_grOU = np.append(df_grOU, test_set[i, :, 0:1], axis=1)
 
     with open(os.path.join('data\\LOBSTERdata\\output\\train\\aggregate', f'forecast_grOU_{len(R_L)}_{R_L}.npy'), 'wb') as f:

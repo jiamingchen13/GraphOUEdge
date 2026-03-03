@@ -21,7 +21,7 @@ class GraphOUEdge:
         self.Q_Q = np.zeros((self.L * K, self.L * K))  # Initialize state-transition matrix
         self.b = np.zeros(K)    # Initial b in the Levy triplet
         self.Sigma = np.eye(K)  # Initial Sigma in the Levy triplet
-        self.jump_F = scipy.stats.multivariate_normal(mean=np.zeros(K), cov=np.eye(K))  # Initial jump distribution for finitely many jumps
+        self.jump_F = scipy.stats.multivariate_normal(mean=np.zeros(K), cov=1000*np.eye(K))  # Initial jump distribution for finitely many jumps
         self.jumps = partial(gamma_increments, shape=1, scale=1, d=K)   # Initial jump increment function for infinitely many jumps
 
         self.log2T = 3  # Number of different time lengths
