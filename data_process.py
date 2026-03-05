@@ -716,6 +716,7 @@ def NA_model(Y, test_set, forecast_step):
     RMSE_NA = np.sqrt(np.mean((forecast_NA - test_set) ** 2))
     print(f'RMSE for Naive model is: {RMSE_NA}')
 
+    return RMSE_NA
 
 def OU_edge_model(Y, test_set, K, test_size, forecast_step, R_L, C, jump_activity, P_, Q_, gamma, method = 'naive',
                   is_global = True, is_single = False, print_param = False, is_test=False):
