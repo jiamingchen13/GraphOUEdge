@@ -676,6 +676,44 @@ def model_pred_single(args):
     RMSE_row[4] = NA_model(sim_Y, sim_test_set, forecast_step)
     return index_, RMSE_row, direction_row, comp_row
 
+
+def worker(arg):
+    delta, forecast_step, jump_activity, gamma= arg
+    # Load the correlation/covariance data
+    data = np.load('./data/LOBSTERdata/output/train/aggregate/cov.npz', allow_pickle=True)
+    index = pd.to_datetime(data['timestamps'])
+    _data = pd.DataFrame({key: data[key] for key in data.files if key != 'timestamps'}, index=index)
+
+    A = np.triu(np.random.randint(0, 2, (8, 8)), 1)
+    A += A.T
+
+    # Derive network structure
+    # TICKERS = ['SPY', 'AMZN', 'JPM', 'GS', 'KO', 'MSFT', 'NDAQ', 'MNST']
+    Adj = adj_to_line_graph(A, ['SPY', 'AMZN', 'JPM', 'GS', 'KO', 'MSFT', 'NDAQ', 'MNST'])
+
+    # Number of edges
+    K = Adj[0].shape[0]
+
+    # Training data
+    Y = _data[Adj[1]].T
+
+    # Set time grids
+    P_ = np.array([i for i in range(Y.shape[1])])
+    Q_ = np.append(P_[::delta], P_[-1]) if (Y.shape[1] - 1) % delta != 0 else P_[::delta]
+
+    # Testing data
+    test_data = np.load('./data/LOBSTERdata/output/test/aggregate/cov.npz', allow_pickle=True)
+    test_index = pd.to_datetime(test_data['timestamps'])
+    test_data_ = pd.DataFrame({key: test_data[key] for key in test_data.files if key != 'timestamps'}, index=test_index)
+    test_Y = test_data_[Adj[1]].T
+    test_set = sliding_window_view(test_Y, (K, forecast_step))[0]
+    test_size = test_set.shape[0]
+
+    RMSE_UAR, direction_acc_UAR = UAR_model(Y, test_set, K, test_size, forecast_step)
+    RMSE_grOU, direction_acc_grOU =  grOU_edge_model(Y, Adj, test_set, K, test_size, forecast_step, [1], 1, jump_activity, P_, Q_, gamma, is_global=False)
+    return direction_acc_grOU - direction_acc_UAR, A, (RMSE_grOU-RMSE_UAR)/RMSE_UAR
+
+
 def model_pred(test_size, adj_sim, forecast_step, P_Q_ratio, jump_activity, gamma, label, scenario):
     with open('./data/LOBSTERdata/output/sim/' + scenario + '/MCAR_CP.npy', 'rb') as f:
         data = np.load(f)
@@ -888,7 +926,10 @@ def OU_edge_model(Y, test_set, K, test_size, forecast_step, R_L, C, jump_activit
     forecast_OU_dir = np.sign(np.diff(np.append(last_, forecast_OU, axis=2), axis=2))
     test_set_dir = np.sign(np.diff(np.append(last_, test_set, axis=2), axis=2))
 
-    return np.array(alphas_OU) if print_param else RMSE_OU, 0.5 if (last_==forecast_OU).all() else (test_set_dir == forecast_OU_dir).mean()
+    if print_param:
+        return np.array(alphas_OU)
+    else:
+        return RMSE_OU, 0.5 if (last_==forecast_OU).all() else (test_set_dir == forecast_OU_dir).mean()
 
 def grOU_edge_model(Y, Adj, test_set, K, test_size, forecast_step, R_L, C, jump_activity, P_, Q_, gamma, method = 'naive',
                     is_global=True, is_single = False, print_param=False, is_test=False):
@@ -975,4 +1016,7 @@ def grOU_edge_model(Y, Adj, test_set, K, test_size, forecast_step, R_L, C, jump_
     forecast_grOU_dir = np.sign(np.diff(np.append(last_, forecast_grOU, axis=2), axis=2))
     test_set_dir = np.sign(np.diff(np.append(last_, test_set, axis=2), axis=2))
 
-    return [alphas, betas] if print_param else RMSE_grOU, 0.5 if (last_==forecast_grOU).all() else (test_set_dir == forecast_grOU_dir).mean()
+    if print_param:
+       return alphas, betas
+    else:
+       return RMSE_grOU, 0.5 if (last_==forecast_grOU).all() else (test_set_dir == forecast_grOU_dir).mean()
