@@ -6,7 +6,7 @@ from mcar.simulate import *
 from mcar.estimate import *
 
 class GraphOUEdge:
-    def __init__(self, R_L: List, K: int, C: int, Adj, W_C, gamma, data_dir: str, plots_dir: str):
+    def __init__(self, R_L: List, K: int, C: int, Adj, W_C, gamma, data_dir: str, plots_dir: str, scale: float = 1, T: int = 8):
         self.L = len(R_L)  # Lags
         self.R_L = R_L  # Maximum stage for each Lag
         self.K = K  # Edges
@@ -21,13 +21,12 @@ class GraphOUEdge:
         self.Q_Q = np.zeros((self.L * K, self.L * K))  # Initialize state-transition matrix
         self.b = np.zeros(K)    # Initial b in the Levy triplet
         self.Sigma = np.eye(K)  # Initial Sigma in the Levy triplet
-        self.jump_F = scipy.stats.multivariate_normal(mean=np.zeros(K), cov=1000*np.eye(K))  # Initial jump distribution for finitely many jumps
+        self.jump_F = scipy.stats.multivariate_normal(mean=np.zeros(K), cov=scale*np.eye(K))  # Initial jump distribution for finitely many jumps
         self.jumps = partial(gamma_increments, shape=1, scale=1, d=K)   # Initial jump increment function for infinitely many jumps
 
         self.log2T = 3  # Number of different time lengths
-        self.T = 3 # Total duration
+        self.T = T # Total duration
         self.N = self.T ** 7 # Number of partitions
-        self.P = np.linspace(0, self.T, self.N + 1)  # delta_P = T^(-6)
         self.data_dir = data_dir
         self.plots_dir = plots_dir
 
@@ -81,7 +80,7 @@ class GraphOUEdge:
         regime, sample_idx, rate = args
         if regime == 'BM':
             x0 = simulate_MCAR_stat_distr_compound_poisson(self.Q_Q, self.b, self.Sigma, 0, self.jump_F)
-            path = simulate_MCAR_compound_poisson(self.P, self.Q_Q, x0, self.b, self.Sigma, 0, self.jump_F, uniform=True)
+            path = simulate_MCAR_compound_poisson(np.linspace(0, self.T, self.N + 1), self.Q_Q, x0, self.b, self.Sigma, 0, self.jump_F, uniform=True)
         elif regime == 'CP':
             try:
                 assert rate > 0
@@ -89,10 +88,10 @@ class GraphOUEdge:
                 print('Need positive rate.')
                 return None
             x0 = simulate_MCAR_stat_distr_compound_poisson(self.Q_Q, self.b, self.Sigma, rate, self.jump_F)
-            path = simulate_MCAR_compound_poisson(self.P, self.Q_Q, x0, self.b, self.Sigma, rate, self.jump_F, uniform=True)
+            path = simulate_MCAR_compound_poisson(np.linspace(0, self.T, self.N + 1), self.Q_Q, x0, self.b, self.Sigma, rate, self.jump_F, uniform=True)
         elif regime == 'Gamma':
             x0 = simulate_MCAR_stat_distr_approx(self.Q_Q, self.b, self.Sigma, self.jumps)
-            path = simulate_MCAR_approx(self.P, self.Q_Q, x0, self.b, self.Sigma, self.jumps, uniform=True)
+            path = simulate_MCAR_approx(np.linspace(0, self.T, self.N + 1), self.Q_Q, x0, self.b, self.Sigma, self.jumps, uniform=True)
         else:
             print("Regime must be 'BM', 'CP' or 'Gamma'.")
             return None
@@ -123,7 +122,7 @@ class GraphOUEdge:
         for n in range(1, self.log2T + 1):
             T = 2 ** n
             subset_P = slice(0, int(self.N / 2 ** (self.log2T - n)) + 1, 2 ** (6 * (self.log2T - n)))
-            P_ = self.P[subset_P]  # delta_P = T^(-6)
+            P_ = np.linspace(0, self.T, self.N + 1)[subset_P]  # delta_P = T^(-6)
             Q_ = P_[::T ** 4]  # delta_Q = T^(-2)
 
             nu = np.diff(Q_) ** beta
@@ -175,7 +174,7 @@ class GraphOUEdge:
         for n in range(1, self.log2T + 1):
             T = 2 ** n
             subset_P = slice(0, int(self.N / 2 ** (self.log2T - n)) + 1, 2 ** (6 * (self.log2T - n)))
-            P_ = self.P[subset_P]  # delta_P = T^(-6)
+            P_ = np.linspace(0, self.T, self.N + 1)[subset_P]  # delta_P = T^(-6)
             Q_ = P_[::T ** 4]  # delta_Q = T^(-2)
 
             nu = np.diff(Q_) ** beta
@@ -245,6 +244,7 @@ class GraphOUEdge:
         with open(os.path.join(self.data_dir, f'MCAR_estimates_F_mean_{jump_activity}.npy'), 'wb') as f:
             np.save(f, F_mean_hat)
 
+        return b_hat, Sigma_hat
     def compute_beta(self, Q_hat, lag):
         Q_hat = Q_hat.reshape(self.K, -1)
         np.fill_diagonal(Q_hat, 0)

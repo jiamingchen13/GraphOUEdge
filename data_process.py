@@ -2,13 +2,14 @@ import os
 import glob
 import math
 import re
+import time
 import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
 import cvxpy as cp
-from joblib import Parallel, delayed
+from scipy.stats import gaussian_kde
 from numpy.linalg import det
-from scipy.optimize import minimize, Bounds, NonlinearConstraint
+from numpy.lib.stride_tricks import sliding_window_view
 from multiprocessing import Pool
 from itertools import combinations
 from datetime import datetime
@@ -642,6 +643,110 @@ def corr_series_to_heatmap(s: pd.Series, sep="_", title="Correlation Heatmap"):
 
     return corr_matrix
 
+def model_pred_single(args):
+    index_, K, sim_Y, sim_test, adj_sim, forecast_step, P_Q_ratio, jump_activity, gamma = args
+
+    sim_test_set = sliding_window_view(sim_test, (K, forecast_step))[0]
+    sim_test_size = sim_test_set.shape[0]
+    P_sim = np.array([i for i in range(sim_Y.shape[1])])
+    Q_sim = np.append(P_sim[::P_Q_ratio], P_sim[-1]) if (sim_Y.shape[1] - 1) % P_Q_ratio != 0 else P_sim[::P_Q_ratio]
+
+    RMSE_row = np.zeros(5)
+    direction_row = np.zeros(4)
+    comp_row = np.zeros(4)
+
+    start = time.perf_counter()
+    RMSE_row[0], direction_row[0] = UAR_model(sim_Y, sim_test_set, K, sim_test_size, forecast_step)
+    comp_row[0] = time.perf_counter() - start
+
+    start = time.perf_counter()
+    RMSE_row[1], direction_row[1] = VAR_model(sim_Y, sim_test_set, K, sim_test_size, forecast_step)
+    comp_row[1] = time.perf_counter() - start
+
+    start = time.perf_counter()
+    RMSE_row[2], direction_row[2] = OU_edge_model(sim_Y, sim_test_set, K, sim_test_size, forecast_step, [1],
+                                    1, jump_activity, P_sim, Q_sim, gamma, is_global=False)
+    comp_row[2] = time.perf_counter() - start
+
+    start = time.perf_counter()
+    RMSE_row[3], direction_row[3] = grOU_edge_model(sim_Y, adj_sim, sim_test_set, K, sim_test_size, forecast_step,
+                                            [1], 1, jump_activity, P_sim, Q_sim, gamma, is_global=False)
+    comp_row[3] = time.perf_counter() - start
+
+    RMSE_row[4] = NA_model(sim_Y, sim_test_set, forecast_step)
+    return index_, RMSE_row, direction_row, comp_row
+
+def model_pred(test_size, adj_sim, forecast_step, P_Q_ratio, jump_activity, gamma, label, scenario):
+    with open('./data/LOBSTERdata/output/sim/' + scenario + '/MCAR_CP.npy', 'rb') as f:
+        data = np.load(f)
+    if label == 'missing_5':
+        data = data[:,1:,:]
+    elif label == 'missing_1':
+        data = data[:,:-1,:]
+
+    n = data.shape[0]
+    RMSE = np.zeros((n, 5))
+    direction_acc = np.zeros((n, 4))
+    comp_time = np.zeros((n, 4))
+
+    args_list = [(i, data.shape[1], data[i, :, :-test_size], data[i, :, -test_size:], adj_sim, forecast_step, P_Q_ratio,
+                  jump_activity, gamma) for i in range(n)]
+    with Pool(os.cpu_count()-4) as pool:
+        for idx, rmse_row, dir_row, comp_row in pool.imap_unordered(model_pred_single, args_list):
+            RMSE[idx] = rmse_row
+            direction_acc[idx] = dir_row
+            comp_time[idx] = comp_row
+
+    with open('./data/LOBSTERdata/output/sim/' + scenario + '/rmse_' + label + '.npy', 'wb') as f:
+        np.save(f, RMSE)
+    with open('./data/LOBSTERdata/output/sim/' + scenario + '/dir_' + label + '.npy', 'wb') as f:
+        np.save(f, direction_acc)
+    with open('./data/LOBSTERdata/output/sim/' + scenario + '/time_' + label + '.npy', 'wb') as f:
+        np.save(f, comp_time)
+
+    fig, ax = plt.subplots(1, 2, figsize=(12, 6))
+
+    positions = np.arange(1, 6)
+    ax[0].boxplot(RMSE[:, :], positions=positions, widths=0.3, showfliers=False)
+
+    for i in range(5):
+        kde = gaussian_kde(RMSE[:, i], bw_method=0.4)
+        low, high = np.percentile(RMSE[:, i], [1, 99])
+        x_vals = np.linspace(low, high, 100)
+        density = kde(x_vals)
+        density = density / density.max() * 0.25
+        # Shift density to the right of box
+        ax[0].plot(positions[i] + density, x_vals)
+
+    ax[0].set_xticks(positions)
+    ax[0].set_xticklabels(['Univariate AR', 'VAR', 'Univariate OU', 'graph OU', 'Baseline'])
+    ax[0].set_ylabel('RMSE')
+    ax[0].set_title("Boxplot and Side Density for RMSE")
+
+    positions = np.arange(1, 5)
+    ax[1].boxplot(direction_acc, positions=positions, widths=0.3)
+
+    for i in range(4):
+        kde = gaussian_kde(direction_acc[:, i], bw_method=0.4)
+        x_vals = np.linspace(min(direction_acc[:, i]), max(direction_acc[:, i]), 100)
+        density = kde(x_vals)
+        density = density / density.max() * 0.25
+        # Shift density to the right of box
+        ax[1].plot(positions[i] + density, x_vals)
+
+    ax[1].set_xticks(positions)
+    ax[1].set_xticklabels(['Univariate AR', 'VAR', 'Univariate OU', 'graph OU'])
+    ax[1].set_ylabel('Directional accuracy')
+    ax[1].set_title("Boxplot and Side Density for directional accuracy")
+
+    plt.show()
+    fig.savefig('./data/LOBSTERdata/output/sim/' + scenario + '/boxplot_' + label + '.eps', bbox_inches='tight', format='eps')
+
+    df = pd.DataFrame([np.mean(RMSE, axis=0), np.std(RMSE, axis=0), np.mean(direction_acc, axis=0), np.std(direction_acc, axis=0),
+                       np.mean(comp_time, axis=0), np.std(comp_time, axis=0)], columns=['Univariate AR', 'VAR', 'Univariate OU', 'graph OU', 'Baseline'],
+                      index = ['RMSE_mean', 'RMSE_std', 'Directional_accuracy_mean', 'Directional_accuracy_std', 'Computational_time_mean', 'Computational_time_std'])
+    return df
+
 
 def UAR_model(Y, test_set, K, test_size, forecast_step, lag = None):
     # Univariate AR Edge Model
@@ -670,12 +775,10 @@ def UAR_model(Y, test_set, K, test_size, forecast_step, lag = None):
         np.save(f, forecast_AR)
 
     RMSE_AR = np.sqrt(np.mean((forecast_AR - test_set) ** 2))
-    print(f'RMSE for UAR Edge model is: {RMSE_AR}')
 
     last_ = np.append(np.array(Y.copy())[:, -1].reshape(-1, 1)[np.newaxis, :, :], test_set[:-1, :, 0:1], axis=0)
     forecast_AR_dir = np.sign(np.diff(np.append(last_, forecast_AR, axis=2), axis=2))
     test_set_dir = np.sign(np.diff(np.append(last_, test_set, axis=2), axis=2))
-    print(f'Direction success rate for UAR Edge model is: {(test_set_dir == forecast_AR_dir).mean()}')
 
     return RMSE_AR, (test_set_dir == forecast_AR_dir).mean()
 
@@ -699,12 +802,10 @@ def VAR_model(Y, test_set, K, test_size, forecast_step):
         np.save(f, forecast_VAR)
 
     RMSE_VAR = np.sqrt(np.mean((forecast_VAR - test_set) ** 2))
-    print(f'RMSE for VAR Edge model is: {RMSE_VAR}')
 
     last_ = np.append(np.array(Y.copy())[:, -1].reshape(-1, 1)[np.newaxis, :, :], test_set[:-1, :, 0:1], axis=0)
     forecast_VAR_dir = np.sign(np.diff(np.append(last_, forecast_VAR, axis=2), axis=2))
     test_set_dir = np.sign(np.diff(np.append(last_, test_set, axis=2), axis=2))
-    print(f'Direction success rate for VAR Edge model is: {(test_set_dir == forecast_VAR_dir).mean()}')
 
     return RMSE_VAR, (test_set_dir == forecast_VAR_dir).mean()
 
@@ -714,7 +815,6 @@ def NA_model(Y, test_set, forecast_step):
     forecast_NA = np.repeat(np.append(np.array(Y.copy())[:, -1].reshape(-1, 1)[np.newaxis, :, :], test_set[:-1, :, 0:1], axis=0), forecast_step, axis=2)
 
     RMSE_NA = np.sqrt(np.mean((forecast_NA - test_set) ** 2))
-    print(f'RMSE for Naive model is: {RMSE_NA}')
 
     return RMSE_NA
 
@@ -727,9 +827,7 @@ def OU_edge_model(Y, test_set, K, test_size, forecast_step, R_L, C, jump_activit
     Adj_L_OU = [np.zeros((K, K)) for _ in range(max(R_L))]
     W_C_OU = edge_weight(Adj_L_OU)
     X_OU = GraphOUEdge(R_L, K, C, Adj_L_OU, W_C_OU, gamma, 'data\\LOBSTERdata\\output\\train\\aggregate', 'plots')
-    X_OU.estimate_unknown_Levy(Y, P_, Q_, 'OU',f'{jump_activity}')
-    b_OU = np.load(f'./data/LOBSTERdata/output/train/aggregate/MCAR_estimates_b_{jump_activity}.npy')
-    Sigma_OU = np.load(f'./data/LOBSTERdata/output/train/aggregate/MCAR_estimates_Sigma_{jump_activity}.npy')
+    b_OU, Sigma_OU = X_OU.estimate_unknown_Levy(Y, P_, Q_, 'OU',f'{jump_activity}')
     alphas_OU = []
 
     if is_test:
@@ -785,12 +883,10 @@ def OU_edge_model(Y, test_set, K, test_size, forecast_step, R_L, C, jump_activit
         np.save(f, forecast_OU)
 
     RMSE_OU = np.sqrt(np.mean((forecast_OU - test_set) ** 2))
-    print(f'RMSE for OU({len(R_L)}) Edge model is: {RMSE_OU}')
 
     last_ = np.append(np.array(Y.copy())[:, -1].reshape(-1, 1)[np.newaxis, :, :], test_set[:-1, :, 0:1], axis=0)
     forecast_OU_dir = np.sign(np.diff(np.append(last_, forecast_OU, axis=2), axis=2))
     test_set_dir = np.sign(np.diff(np.append(last_, test_set, axis=2), axis=2))
-    print(f'Direction success rate for OU({len(R_L)}) Edge model is: {0.5 if (last_==forecast_OU).all() else (test_set_dir == forecast_OU_dir).mean()}')
 
     return np.array(alphas_OU) if print_param else RMSE_OU, 0.5 if (last_==forecast_OU).all() else (test_set_dir == forecast_OU_dir).mean()
 
@@ -805,9 +901,7 @@ def grOU_edge_model(Y, Adj, test_set, K, test_size, forecast_step, R_L, C, jump_
     W_C = edge_weight(Adj_L)
 
     X = GraphOUEdge(R_L, K, C, Adj_L, W_C, gamma, 'data\\LOBSTERdata\\output\\train\\aggregate', 'plots')
-    X.estimate_unknown_Levy(Y, P_, Q_, 'grOU',f'{jump_activity}')
-    b = np.load(f'./data/LOBSTERdata/output/train/aggregate/MCAR_estimates_b_{jump_activity}.npy')
-    Sigma = np.load(f'./data/LOBSTERdata/output/train/aggregate/MCAR_estimates_Sigma_{jump_activity}.npy')
+    b, Sigma = X.estimate_unknown_Levy(Y, P_, Q_, 'grOU',f'{jump_activity}')
     forecast_grOU = np.zeros((test_size, K, forecast_step))
     df_grOU = np.array(Y.copy())
     alphas = []
@@ -876,11 +970,9 @@ def grOU_edge_model(Y, Adj, test_set, K, test_size, forecast_step, R_L, C, jump_
         np.save(f, forecast_grOU)
 
     RMSE_grOU = np.sqrt(np.mean((forecast_grOU - test_set) ** 2))
-    print(f'RMSE for graph OU({len(R_L)}_{R_L}) Edge model is: {RMSE_grOU}')
 
     last_ = np.append(np.array(Y.copy())[:, -1].reshape(-1, 1)[np.newaxis, :, :], test_set[:-1, :, 0:1], axis=0)
     forecast_grOU_dir = np.sign(np.diff(np.append(last_, forecast_grOU, axis=2), axis=2))
     test_set_dir = np.sign(np.diff(np.append(last_, test_set, axis=2), axis=2))
-    print(f'Direction success rate for graph OU({len(R_L)}_{R_L}) Edge model is: {0.5 if (last_==forecast_grOU).all() else (test_set_dir == forecast_grOU_dir).mean()}')
 
     return [alphas, betas] if print_param else RMSE_grOU, 0.5 if (last_==forecast_grOU).all() else (test_set_dir == forecast_grOU_dir).mean()
