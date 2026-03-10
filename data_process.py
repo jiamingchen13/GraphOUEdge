@@ -643,40 +643,6 @@ def corr_series_to_heatmap(s: pd.Series, sep="_", title="Correlation Heatmap"):
 
     return corr_matrix
 
-def model_pred_single(args):
-    index_, K, sim_Y, sim_test, adj_sim, forecast_step, P_Q_ratio, jump_activity, gamma = args
-
-    sim_test_set = sliding_window_view(sim_test, (K, forecast_step))[0]
-    sim_test_size = sim_test_set.shape[0]
-    P_sim = np.array([i for i in range(sim_Y.shape[1])])
-    Q_sim = np.append(P_sim[::P_Q_ratio], P_sim[-1]) if (sim_Y.shape[1] - 1) % P_Q_ratio != 0 else P_sim[::P_Q_ratio]
-
-    RMSE_row = np.zeros(5)
-    direction_row = np.zeros(4)
-    comp_row = np.zeros(4)
-
-    start = time.perf_counter()
-    RMSE_row[0], direction_row[0] = UAR_model(sim_Y, sim_test_set, K, sim_test_size, forecast_step)
-    comp_row[0] = time.perf_counter() - start
-
-    start = time.perf_counter()
-    RMSE_row[1], direction_row[1] = VAR_model(sim_Y, sim_test_set, K, sim_test_size, forecast_step)
-    comp_row[1] = time.perf_counter() - start
-
-    start = time.perf_counter()
-    RMSE_row[2], direction_row[2] = OU_edge_model(sim_Y, sim_test_set, K, sim_test_size, forecast_step, [1],
-                                    1, jump_activity, P_sim, Q_sim, gamma, is_global=False)
-    comp_row[2] = time.perf_counter() - start
-
-    start = time.perf_counter()
-    RMSE_row[3], direction_row[3] = grOU_edge_model(sim_Y, adj_sim, sim_test_set, K, sim_test_size, forecast_step,
-                                            [1], 1, jump_activity, P_sim, Q_sim, gamma, is_global=False)
-    comp_row[3] = time.perf_counter() - start
-
-    RMSE_row[4] = NA_model(sim_Y, sim_test_set, forecast_step)
-    return index_, RMSE_row, direction_row, comp_row
-
-
 def worker(arg):
     delta, forecast_step, jump_activity, gamma= arg
     # Load the correlation/covariance data
@@ -714,6 +680,40 @@ def worker(arg):
     return direction_acc_grOU - direction_acc_UAR, A, (RMSE_grOU-RMSE_UAR)/RMSE_UAR
 
 
+def model_pred_single(args):
+    index_, K, sim_Y, sim_test, adj_sim, forecast_step, P_Q_ratio, jump_activity, gamma = args
+
+    sim_test_set = sliding_window_view(sim_test, (K, forecast_step))[0]
+    sim_test_size = sim_test_set.shape[0]
+    P_sim = np.array([i for i in range(sim_Y.shape[1])])
+    Q_sim = np.append(P_sim[::P_Q_ratio], P_sim[-1]) if (sim_Y.shape[1] - 1) % P_Q_ratio != 0 else P_sim[::P_Q_ratio]
+
+    RMSE_row = np.zeros(5)
+    direction_row = np.zeros(4)
+    comp_row = np.zeros(4)
+
+    start = time.perf_counter()
+    RMSE_row[0], direction_row[0] = UAR_model(sim_Y, sim_test_set, K, sim_test_size, forecast_step)
+    comp_row[0] = time.perf_counter() - start
+
+    start = time.perf_counter()
+    RMSE_row[1], direction_row[1] = VAR_model(sim_Y, sim_test_set, K, sim_test_size, forecast_step)
+    comp_row[1] = time.perf_counter() - start
+
+    start = time.perf_counter()
+    RMSE_row[2], direction_row[2] = OU_edge_model(sim_Y, sim_test_set, K, sim_test_size, forecast_step, [1],
+                                    1, jump_activity, P_sim, Q_sim, gamma, is_global=False)
+    comp_row[2] = time.perf_counter() - start
+
+    start = time.perf_counter()
+    RMSE_row[3], direction_row[3] = grOU_edge_model(sim_Y, adj_sim, sim_test_set, K, sim_test_size, forecast_step,
+                                            [1], 1, jump_activity, P_sim, Q_sim, gamma, is_global=False)
+    comp_row[3] = time.perf_counter() - start
+
+    RMSE_row[4] = NA_model(sim_Y, sim_test_set, forecast_step)
+    return index_, RMSE_row, direction_row, comp_row
+
+
 def model_pred(test_size, adj_sim, forecast_step, P_Q_ratio, jump_activity, gamma, label, scenario):
     with open('./data/LOBSTERdata/output/sim/' + scenario + '/MCAR_CP.npy', 'rb') as f:
         data = np.load(f)
@@ -729,7 +729,7 @@ def model_pred(test_size, adj_sim, forecast_step, P_Q_ratio, jump_activity, gamm
 
     args_list = [(i, data.shape[1], data[i, :, :-test_size], data[i, :, -test_size:], adj_sim, forecast_step, P_Q_ratio,
                   jump_activity, gamma) for i in range(n)]
-    with Pool(os.cpu_count()-4) as pool:
+    with Pool(os.cpu_count() - 4) as pool:
         for idx, rmse_row, dir_row, comp_row in pool.imap_unordered(model_pred_single, args_list):
             RMSE[idx] = rmse_row
             direction_acc[idx] = dir_row
@@ -742,48 +742,113 @@ def model_pred(test_size, adj_sim, forecast_step, P_Q_ratio, jump_activity, gamm
     with open('./data/LOBSTERdata/output/sim/' + scenario + '/time_' + label + '.npy', 'wb') as f:
         np.save(f, comp_time)
 
+
+def boxplot_(scenario):
+    with open('./data/LOBSTERdata/output/sim/' + scenario + '/MCAR_CP.npy', 'rb') as f:
+        sim = np.load(f)
+    plt.plot(sim[0, :, :].T)
+    plt.savefig('./data/LOBSTERdata/output/sim/' + scenario + '/sample_path.eps', bbox_inches='tight', format='eps')
+
+    grOU_RMSE = np.zeros((1000, 3))
+    grOU_direction_acc = np.zeros((1000, 3))
+
+    for i, label in enumerate(['correct', 'missing_5', 'missing_1']):
+        with open('./data/LOBSTERdata/output/sim/' + scenario + '/rmse_' + label + '.npy', 'rb') as f:
+            RMSE = np.load(f)
+        grOU_RMSE[:, i] = RMSE[:, 3]
+
+        with open('./data/LOBSTERdata/output/sim/' + scenario + '/dir_' + label + '.npy', 'rb') as f:
+            direction_acc = np.load(f)
+        grOU_direction_acc[:, i] = direction_acc[:, 3]
+
+        with open('./data/LOBSTERdata/output/sim/' + scenario + '/time_' + label + '.npy', 'rb') as f:
+            comp_time = np.load(f)
+
+        fig, ax = plt.subplots(1, 2, figsize=(12, 6))
+
+        positions = np.arange(1, 6)
+        ax[0].boxplot(RMSE[:, :], positions=positions, widths=0.3, showfliers=False)
+
+        for i in range(5):
+            kde = gaussian_kde(RMSE[:, i], bw_method=0.4)
+            low, high = np.percentile(RMSE[:, i], [1, 99])
+            x_vals = np.linspace(low, high, 100)
+            density = kde(x_vals)
+            density = density / density.max() * 0.25
+            # Shift density to the right of box
+            ax[0].plot(positions[i] + density, x_vals)
+
+        ax[0].set_xticks(positions)
+        ax[0].set_xticklabels(['Univariate AR', 'VAR', 'Univariate OU', 'graph OU', 'Baseline'])
+        ax[0].set_ylabel('RMSE')
+        ax[0].set_title("Boxplot and Side Density for RMSE: " + label)
+
+        positions = np.arange(1, 5)
+        ax[1].boxplot(direction_acc, positions=positions, widths=0.3)
+
+        for i in range(4):
+            kde = gaussian_kde(direction_acc[:, i], bw_method=0.4)
+            x_vals = np.linspace(min(direction_acc[:, i]), max(direction_acc[:, i]), 100)
+            density = kde(x_vals)
+            density = density / density.max() * 0.25
+            # Shift density to the right of box
+            ax[1].plot(positions[i] + density, x_vals)
+
+        ax[1].set_xticks(positions)
+        ax[1].set_xticklabels(['Univariate AR', 'VAR', 'Univariate OU', 'graph OU'])
+        ax[1].set_ylabel('Directional accuracy')
+        ax[1].set_title("Boxplot and Side Density for directional accuracy: " + label)
+
+        plt.show()
+        fig.savefig('./data/LOBSTERdata/output/sim/' + scenario + '/boxplot_' + label + '.eps', bbox_inches='tight',
+                    format='eps')
+
+        df = pd.DataFrame(
+            [np.mean(RMSE, axis=0), np.std(RMSE, axis=0), np.mean(direction_acc, axis=0), np.std(direction_acc, axis=0),
+             np.mean(comp_time, axis=0), np.std(comp_time, axis=0)],
+            columns=['Univariate AR', 'VAR', 'Univariate OU', 'graph OU', 'Baseline'],
+            index=['RMSE_mean', 'RMSE_std', 'Directional_accuracy_mean', 'Directional_accuracy_std',
+                   'Computational_time_mean', 'Computational_time_std'])
+        print(label)
+        print(df)
+
     fig, ax = plt.subplots(1, 2, figsize=(12, 6))
 
-    positions = np.arange(1, 6)
-    ax[0].boxplot(RMSE[:, :], positions=positions, widths=0.3, showfliers=False)
+    positions = np.arange(1, 4)
+    ax[0].boxplot(grOU_RMSE[:, :], positions=positions, widths=0.3, showfliers=False)
 
-    for i in range(5):
-        kde = gaussian_kde(RMSE[:, i], bw_method=0.4)
-        low, high = np.percentile(RMSE[:, i], [1, 99])
+    for i in range(3):
+        kde = gaussian_kde(grOU_RMSE[:, i], bw_method=0.4)
+        low, high = np.percentile(grOU_RMSE[:, i], [1, 99])
         x_vals = np.linspace(low, high, 100)
         density = kde(x_vals)
         density = density / density.max() * 0.25
         # Shift density to the right of box
         ax[0].plot(positions[i] + density, x_vals)
 
-    ax[0].set_xticks(positions)
-    ax[0].set_xticklabels(['Univariate AR', 'VAR', 'Univariate OU', 'graph OU', 'Baseline'])
-    ax[0].set_ylabel('RMSE')
-    ax[0].set_title("Boxplot and Side Density for RMSE")
+        ax[0].set_xticks(positions)
+        ax[0].set_xticklabels(['correct', 'missing_5', 'missing_1'])
+        ax[0].set_ylabel('RMSE')
+        ax[0].set_title("Boxplot and Side Density for grOU RMSE")
 
-    positions = np.arange(1, 5)
-    ax[1].boxplot(direction_acc, positions=positions, widths=0.3)
+    positions = np.arange(1, 4)
+    ax[1].boxplot(grOU_direction_acc, positions=positions, widths=0.3)
 
-    for i in range(4):
-        kde = gaussian_kde(direction_acc[:, i], bw_method=0.4)
-        x_vals = np.linspace(min(direction_acc[:, i]), max(direction_acc[:, i]), 100)
+    for i in range(3):
+        kde = gaussian_kde(grOU_direction_acc[:, i], bw_method=0.4)
+        x_vals = np.linspace(min(grOU_direction_acc[:, i]), max(grOU_direction_acc[:, i]), 100)
         density = kde(x_vals)
         density = density / density.max() * 0.25
         # Shift density to the right of box
         ax[1].plot(positions[i] + density, x_vals)
 
-    ax[1].set_xticks(positions)
-    ax[1].set_xticklabels(['Univariate AR', 'VAR', 'Univariate OU', 'graph OU'])
-    ax[1].set_ylabel('Directional accuracy')
-    ax[1].set_title("Boxplot and Side Density for directional accuracy")
+        ax[1].set_xticks(positions)
+        ax[1].set_xticklabels(['correct', 'missing_5', 'missing_1'])
+        ax[1].set_ylabel('Directional accuracy')
+        ax[1].set_title("Boxplot and Side Density for grOU directional accuracy")
 
     plt.show()
-    fig.savefig('./data/LOBSTERdata/output/sim/' + scenario + '/boxplot_' + label + '.eps', bbox_inches='tight', format='eps')
-
-    df = pd.DataFrame([np.mean(RMSE, axis=0), np.std(RMSE, axis=0), np.mean(direction_acc, axis=0), np.std(direction_acc, axis=0),
-                       np.mean(comp_time, axis=0), np.std(comp_time, axis=0)], columns=['Univariate AR', 'VAR', 'Univariate OU', 'graph OU', 'Baseline'],
-                      index = ['RMSE_mean', 'RMSE_std', 'Directional_accuracy_mean', 'Directional_accuracy_std', 'Computational_time_mean', 'Computational_time_std'])
-    return df
+    fig.savefig('./data/LOBSTERdata/output/sim/' + scenario + '/boxplot_grOU.eps', bbox_inches='tight', format='eps')
 
 
 def UAR_model(Y, test_set, K, test_size, forecast_step, lag = None):
