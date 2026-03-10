@@ -644,7 +644,7 @@ def corr_series_to_heatmap(s: pd.Series, sep="_", title="Correlation Heatmap"):
     return corr_matrix
 
 def worker(arg):
-    delta, forecast_step, jump_activity, gamma= arg
+    delta, forecast_step, jump_activity, gamma = arg
     # Load the correlation/covariance data
     data = np.load('./data/LOBSTERdata/output/train/aggregate/cov.npz', allow_pickle=True)
     index = pd.to_datetime(data['timestamps'])
@@ -654,7 +654,6 @@ def worker(arg):
     A += A.T
 
     # Derive network structure
-    # TICKERS = ['SPY', 'AMZN', 'JPM', 'GS', 'KO', 'MSFT', 'NDAQ', 'MNST']
     Adj = adj_to_line_graph(A, ['SPY', 'AMZN', 'JPM', 'GS', 'KO', 'MSFT', 'NDAQ', 'MNST'])
 
     # Number of edges
