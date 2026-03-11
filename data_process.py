@@ -4,11 +4,8 @@ import math
 import re
 import time
 import pandas as pd
-import seaborn as sns
 import matplotlib.pyplot as plt
-import cvxpy as cp
 from scipy.stats import gaussian_kde
-from numpy.linalg import det
 from numpy.lib.stride_tricks import sliding_window_view
 from multiprocessing import Pool
 from itertools import combinations
@@ -290,29 +287,6 @@ def MRC(Y, delta, theta, is_corr = True):
 
     return pd.Series(data, index=labels)
 
-
-def plot_realizedCov(cov_data, rules, out_dir='./data/LOBSTERdata/output/aggregate/'):
-    fig, axes = plt.subplots(cov_data.shape[1], 1, figsize=(12, 3 * cov_data.shape[1]), sharex=True)
-
-    for j in range(cov_data.shape[1]):
-        ax = axes[j]
-        for rule in rules:
-            df_cov = cov_data.resample(rule).sum()
-            df_cov = df_cov.loc[df_cov.index.intersection(cov_data.index)]
-            df_cov.index = df_cov.index.strftime('%Y-%m-%d %H:%M')
-            ax.plot(df_cov.iloc[:, j], label=rule)
-
-        ax.set_title(f"{cov_data.columns[j]}")
-        ax.set_ylabel("Covariance/Variance")
-        ax.legend()
-        ax.grid(True)
-
-    plt.tight_layout()
-    plt.xticks(df_cov.index[::6], rotation=45)
-
-    fig.savefig(out_dir + 'plot.eps', bbox_inches='tight', format='eps')
-
-
 def adjacency_matrices(A, n):
     """
     Compute all adjacency matrices up to distance n.
@@ -339,7 +313,6 @@ def adjacency_matrices(A, n):
 
     return results
 
-
 def edge_weight(adjs):
     """
     Compute edge weight for each edge in the network (for only one covariate now).
@@ -355,7 +328,6 @@ def edge_weight(adjs):
 
     return [result]
 
-
 def adj_to_line_graph(adj, TICKERS):
     adjacency = pd.DataFrame(adj, index=TICKERS, columns=TICKERS)
     n = adjacency.shape[0]
@@ -370,7 +342,6 @@ def adj_to_line_graph(adj, TICKERS):
     B = M.T @ M
     np.fill_diagonal(B, 0)
     return [B, edges_]
-
 
 def line_graph(cov_data, TICKERS, corr_thres = 0.25, ratio_thres = 0.1):
     """
@@ -423,7 +394,6 @@ def line_graph(cov_data, TICKERS, corr_thres = 0.25, ratio_thres = 0.1):
     np.fill_diagonal(B, 0)
     return [B, edges_]
 
-
 def log_data_to_corr_data(path: str, rule: str, delta = .6, theta = 1, is_corr = True):
     # Load empirical data
     data = np.load(path + 'log_price.npz')
@@ -432,7 +402,7 @@ def log_data_to_corr_data(path: str, rule: str, delta = .6, theta = 1, is_corr =
     log_price_data = pd.DataFrame({col: data[col] for col in columns}, index=index)
     data.close()
 
-    # Compute modulated realised correlation
+    # Compute modulated realized correlation
     out = {}
 
     for timestamp, group in log_price_data.resample(rule):
@@ -449,57 +419,6 @@ def log_data_to_corr_data(path: str, rule: str, delta = .6, theta = 1, is_corr =
         np.savez(path + 'cov.npz', timestamps=corr_data.index,
                  **{col: corr_data[col].values for col in corr_data.columns})
 
-
-def hurwitz_principal_minors(a):
-    #a = [a_1, a_2,..., a_l] length l
-    n = len(a)
-    H = np.zeros((n, n))
-    for i in range(n):
-        for j in range(n):
-            idx = 2 * j - i + 1
-            if 0 < idx <= n:
-                H[i,j] = a[idx - 1]
-            elif idx == 0:
-                H[i,j] = 1   # coefficient of lambda^n (monic) when appears
-            else:
-                H[i,j] = 0
-    # compute leading principal minors Delta_k
-    deltas = [det(H[:k, :k]) for k in range(1, n+1)]
-    return np.array(deltas)
-
-
-def estimator_to_QQ_cp(V, R_L: np.ndarray, C: int, W_C, Adj, K: int):
-    alphas = []
-    betas = []
-    idx = 0
-    L = len(R_L)
-
-    for l in range(L):
-        # extract alpha_l
-        alphas.append(V[idx])
-        idx += 1
-
-        # extract beta_l block
-        n_beta = C * R_L[l]
-        betas.append(cp.reshape(V[idx:idx + n_beta], (n_beta, 1), order='F'))
-        idx += n_beta
-
-    W = [[np.multiply(W_C[c], Adj[stage]) for c in range(C) for stage in range(R_i)] for R_i in R_L]
-    Q = []
-    for l in range(L):
-        alpha_mat = cp.multiply(alphas[l], np.eye(K))
-        kron_beta = cp.kron(betas[l], np.eye(K))
-        Q.append(alpha_mat + cp.hstack(W[l]) @ kron_beta)
-
-    top_blocks = []
-    for i in range(L - 1):
-        row = [np.zeros((K, K)) for _ in range(L)]
-        row[i + 1] = np.eye(K)
-        top_blocks.append(np.hstack(row))
-        # Last row: -A_p, ..., -A_1
-    last_row = [-Q[L - i - 1] for i in range(L)]
-    all_rows = cp.vstack(top_blocks + [cp.hstack(last_row)])
-    return cp.bmat(all_rows)
 
 def kalman_filter_mcar(Y, A, Sigma, P_):
     """
@@ -551,7 +470,6 @@ def kalman_filter_mcar(Y, A, Sigma, P_):
         m_filtered.append(m.copy())
 
     return m_filtered[-1]
-
 
 def kalman_filter_mcar_BM(Y, A, Sigma, P_, Q_, AA_hat, gamma):
     """
@@ -608,40 +526,6 @@ def kalman_filter_mcar_BM(Y, A, Sigma, P_, Q_, AA_hat, gamma):
         m_filtered.append(m.copy())
 
     return m_filtered[-1]
-
-
-def corr_series_to_heatmap(s: pd.Series, sep="_", title="Correlation Heatmap"):
-    df = s.to_frame(name="corr")
-    pairs = df.index.to_series().str.split(sep, expand=True)
-
-    df["var1"] = pairs[0]
-    df["var2"] = pairs[1]
-
-    vars_ = sorted(set(df["var1"]).union(set(df["var2"])))
-    corr_matrix = pd.DataFrame(np.nan, index=vars_, columns=vars_)
-
-    for _, row in df.iterrows():
-        i = row["var1"]
-        j = row["var2"]
-        val = row["corr"]
-        corr_matrix.loc[i, j] = val
-        corr_matrix.loc[j, i] = val
-
-    np.fill_diagonal(corr_matrix.values, 1.0)
-
-    plt.figure(figsize=(6, 5))
-    sns.heatmap(
-        corr_matrix,
-        annot=True,
-        fmt=".2f",
-        vmin=-1, vmax=1,
-        cmap="coolwarm"
-    )
-    plt.title(title)
-    plt.tight_layout()
-    plt.show()
-
-    return corr_matrix
 
 def worker(arg):
     delta, forecast_step, jump_activity, gamma = arg
@@ -768,14 +652,14 @@ def boxplot_(scenario):
         positions = np.arange(1, 6)
         ax[0].boxplot(RMSE[:, :], positions=positions, widths=0.3, showfliers=False)
 
-        for i in range(5):
-            kde = gaussian_kde(RMSE[:, i], bw_method=0.4)
-            low, high = np.percentile(RMSE[:, i], [1, 99])
+        for j in range(5):
+            kde = gaussian_kde(RMSE[:, j], bw_method=0.4)
+            low, high = np.percentile(RMSE[:, j], [1, 99])
             x_vals = np.linspace(low, high, 100)
             density = kde(x_vals)
             density = density / density.max() * 0.25
             # Shift density to the right of box
-            ax[0].plot(positions[i] + density, x_vals)
+            ax[0].plot(positions[j] + density, x_vals)
 
         ax[0].set_xticks(positions)
         ax[0].set_xticklabels(['Univariate AR', 'VAR', 'Univariate OU', 'graph OU', 'Baseline'])
@@ -785,13 +669,13 @@ def boxplot_(scenario):
         positions = np.arange(1, 5)
         ax[1].boxplot(direction_acc, positions=positions, widths=0.3)
 
-        for i in range(4):
-            kde = gaussian_kde(direction_acc[:, i], bw_method=0.4)
-            x_vals = np.linspace(min(direction_acc[:, i]), max(direction_acc[:, i]), 100)
+        for k in range(4):
+            kde = gaussian_kde(direction_acc[:, k], bw_method=0.4)
+            x_vals = np.linspace(min(direction_acc[:, k]), max(direction_acc[:, k]), 100)
             density = kde(x_vals)
             density = density / density.max() * 0.25
             # Shift density to the right of box
-            ax[1].plot(positions[i] + density, x_vals)
+            ax[1].plot(positions[k] + density, x_vals)
 
         ax[1].set_xticks(positions)
         ax[1].set_xticklabels(['Univariate AR', 'VAR', 'Univariate OU', 'graph OU'])
@@ -920,16 +804,16 @@ def NA_model(Y, test_set, forecast_step):
 
     return RMSE_NA
 
-def OU_edge_model(Y, test_set, K, test_size, forecast_step, R_L, C, jump_activity, P_, Q_, gamma, method = 'naive',
-                  is_global = True, is_single = False, print_param = False, is_test=False):
+def OU_edge_model(Y, test_set, K, test_size, forecast_step, R_L, C, P_, Q_, gamma, method = 'naive',
+                  is_global = False, print_param = False, is_test=False):
     # OU Edge model
 
     forecast_OU = np.zeros((test_size, K, forecast_step))
     df_OU = np.array(Y.copy())
-    Adj_L_OU = [np.zeros((K, K)) for _ in range(max(R_L))]
+    Adj_L_OU = np.array([np.zeros((K, K)) for _ in range(max(R_L))])
     W_C_OU = edge_weight(Adj_L_OU)
-    X_OU = GraphOUEdge(R_L, K, C, Adj_L_OU, W_C_OU, gamma, 'data\\LOBSTERdata\\output\\train\\aggregate', 'plots')
-    b_OU, Sigma_OU = X_OU.estimate_unknown_Levy(Y, P_, Q_, 'OU',f'{jump_activity}')
+    X_OU = GraphOUEdge(R_L, K, C, Adj_L_OU, W_C_OU, gamma, 'data\\LOBSTERdata\\output\\train\\aggregate')
+    b_OU, Sigma_OU = X_OU.estimate_unknown_Levy(Y, P_, Q_, 'OU')
     alphas_OU = []
 
     if is_test:
@@ -937,7 +821,7 @@ def OU_edge_model(Y, test_set, K, test_size, forecast_step, R_L, C, jump_activit
 
     for i in range(test_size):
         window_data = df_OU[:, i:]
-        theta_hat_OU, HH, H = estimate_OU_drift(window_data, R_L, C, P_, Q_, b_OU, gamma, None, Sigma_OU, with_cov=True, is_global=is_global, is_single=is_single)
+        theta_hat_OU, HH, H = estimate_OU_drift(window_data, R_L, C, P_, Q_, b_OU, gamma, None, Sigma_OU, with_cov=True, is_global=is_global)
         X_OU.alpha_set(theta_hat_OU)
         X_OU.beta_set([[0] * stage * C for stage in R_L])
         Q_Q = X_OU.Q_matrix(False)
@@ -995,18 +879,18 @@ def OU_edge_model(Y, test_set, K, test_size, forecast_step, R_L, C, jump_activit
     else:
         return RMSE_OU, 0.5 if (last_==forecast_OU).all() else (test_set_dir == forecast_OU_dir).mean()
 
-def grOU_edge_model(Y, Adj, test_set, K, test_size, forecast_step, R_L, C, jump_activity, P_, Q_, gamma, method = 'naive',
-                    is_global=True, is_single = False, print_param=False, is_test=False):
+def grOU_edge_model(Y, Adj, test_set, K, test_size, forecast_step, R_L, C, P_, Q_, gamma, method = 'naive',
+                    is_global=False, print_param=False, is_test=False):
     # graph OU Edge model
 
     # Derive the adjacency matrix for edge graph
-    Adj_L = adjacency_matrices(Adj[0], max(R_L))
+    Adj_L = np.array(adjacency_matrices(Adj[0], max(R_L)))
 
     # Compute the edge weight
     W_C = edge_weight(Adj_L)
 
-    X = GraphOUEdge(R_L, K, C, Adj_L, W_C, gamma, 'data\\LOBSTERdata\\output\\train\\aggregate', 'plots')
-    b, Sigma = X.estimate_unknown_Levy(Y, P_, Q_, 'grOU',f'{jump_activity}')
+    X = GraphOUEdge(R_L, K, C, Adj_L, W_C, gamma, 'data\\LOBSTERdata\\output\\train\\aggregate')
+    b, Sigma = X.estimate_unknown_Levy(Y, P_, Q_, 'grOU')
     forecast_grOU = np.zeros((test_size, K, forecast_step))
     df_grOU = np.array(Y.copy())
     alphas = []
@@ -1017,7 +901,7 @@ def grOU_edge_model(Y, Adj, test_set, K, test_size, forecast_step, R_L, C, jump_
 
     for i in range(test_size):
         window_data = df_grOU[:, i:]
-        theta_hat, HH, H = estimate_grOU_drift(window_data, Adj_L, W_C, R_L, C, P_, Q_, b, gamma, None, Sigma, with_cov=True, is_global=is_global, is_single=is_single)
+        theta_hat, HH, H = estimate_grOU_drift(window_data, Adj_L, W_C, R_L, C, P_, Q_, b, gamma, None, Sigma, with_cov=True, is_global=is_global)
 
         # Fetch parameters
         idx = 0
@@ -1071,7 +955,7 @@ def grOU_edge_model(Y, Adj, test_set, K, test_size, forecast_step, R_L, C, jump_
         forecast_grOU[i, :, :] = np.array(X_[:K, 1:])
         df_grOU = np.append(df_grOU, test_set[i, :, 0:1], axis=1)
 
-    with open(os.path.join('data\\LOBSTERdata\\output\\train\\aggregate', f'forecast_grOU_{len(R_L)}_{R_L}.npy'), 'wb') as f:
+    with open(os.path.join('data\\LOBSTERdata\\output\\train\\aggregate', f'forecast_grOU_{len(R_L)}_{R_L}_{method}_global_{is_global}.npy'), 'wb') as f:
         np.save(f, forecast_grOU)
 
     RMSE_grOU = np.sqrt(np.mean((forecast_grOU - test_set) ** 2))

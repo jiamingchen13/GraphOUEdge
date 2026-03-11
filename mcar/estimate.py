@@ -20,7 +20,7 @@ def state_space(Y: np.ndarray, p: int, P: np.ndarray) -> np.ndarray:
     return X
 
 def estimate_grOU_drift(Y: np.ndarray, A: np.ndarray, W_C: List, R_L: List, C: int, P: np.ndarray, Q: np.ndarray, b: np.ndarray,
-                         gamma: float, nu: np.ndarray = None, Sigma: np.ndarray = None, with_cov: bool = False, is_global: bool = True):
+                         gamma: float, nu: np.ndarray = None, Sigma: np.ndarray = None, with_cov: bool = False, is_global: bool = False):
     """
     Estimate grOU drift parameters from the realization of a grOU process with driving Levy triplet (b, Sigma, F).
     Here the Levy drift parameter b corresponds to no truncation t(x) = 0 when the process has finite jump activity, thus E[L_1] = b + \int_{R^d} z F(dz).
@@ -226,7 +226,7 @@ def estimate_grOU_drift(Y: np.ndarray, A: np.ndarray, W_C: List, R_L: List, C: i
         return vec_theta_hat
 
 def estimate_OU_drift(Y: np.ndarray, R_L: List, C: int, P: np.ndarray, Q: np.ndarray, b: np.ndarray, gamma: float,
-                      nu: np.ndarray = None, Sigma: np.ndarray = None, with_cov: bool = False, is_global: bool = True):
+                      nu: np.ndarray = None, Sigma: np.ndarray = None, with_cov: bool = False, is_global: bool = False):
     """
     Estimate OU drift parameters from the realization of a process with driving Levy triplet (b, Sigma, F). Here the Levy drift parameter b corresponds to
     no truncation t(x) = 0 when the process has finite jump activity, thus E[L_1] = b + \int_{R^d} z F(dz).
@@ -540,7 +540,7 @@ def estimate_MCAR(
         f: np.ndarray = None,
         mu: np.ndarray = None,
         mu_estimator: str = 'MCAR_mean',
-        is_global: bool = True
+        is_global: bool = False
     ):
     """
     Estimate MCAR parameters from the realization of a MCAR process. Estimate both drift parameter and Levy triplet parameters (b, Sigma).
