@@ -22,7 +22,7 @@ class GraphOUEdgehpc:
         self.b = np.zeros(K)    # Initial b in the Levy triplet
         self.Sigma = np.eye(K)  # Initial Sigma in the Levy triplet
         self.jump_F = scipy.stats.multivariate_normal(mean=np.zeros(K), cov=np.eye(K))  # Initial jump distribution for finitely many jumps
-        self.jumps = partial(gamma_increments, shape=1, scale=1, d=K)   # Initial jump increment function for infinitely many jumps
+
         self.log2T = 3  # Number of different time lengths
         self.T = 2 ** self.log2T # Total duration
         self.N = self.T ** 7 # Number of partitions
@@ -53,7 +53,7 @@ class GraphOUEdgehpc:
             self.Q.append(np.diag(self.alpha[l]) + np.matmul(np.concatenate(self.W[l], axis=1), np.concatenate(
                 np.tensordot(np.array(self.beta[l]).T, np.identity(self.K), axes=0), axis=0)))
             l += 1
-        self.Q_Q = MCAR_A(np.array(self.Q))
+        self.Q_Q = MCAR_Q(np.array(self.Q))
         evals, evecs = np.linalg.eig(self.Q_Q)
         try:
             assert (np.real(evals) < 0).all()
