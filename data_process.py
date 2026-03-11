@@ -713,7 +713,7 @@ def model_pred_single(args):
     return index_, RMSE_row, direction_row, comp_row
 
 
-def model_pred(test_size, adj_sim, forecast_step, P_Q_ratio, jump_activity, gamma, label, scenario):
+def model_pred(test_size, adj_sim, forecast_step, P_Q_ratio, gamma, label, scenario):
     with open('./data/LOBSTERdata/output/sim/' + scenario + '/MCAR_CP.npy', 'rb') as f:
         data = np.load(f)
     if label == 'missing_5':
@@ -727,7 +727,7 @@ def model_pred(test_size, adj_sim, forecast_step, P_Q_ratio, jump_activity, gamm
     comp_time = np.zeros((n, 4))
 
     args_list = [(i, data.shape[1], data[i, :, :-test_size], data[i, :, -test_size:], adj_sim, forecast_step, P_Q_ratio,
-                  jump_activity, gamma) for i in range(n)]
+                  gamma) for i in range(n)]
     with Pool(os.cpu_count() - 4) as pool:
         for idx, rmse_row, dir_row, comp_row in pool.imap_unordered(model_pred_single, args_list):
             RMSE[idx] = rmse_row
@@ -1017,7 +1017,7 @@ def grOU_edge_model(Y, Adj, test_set, K, test_size, forecast_step, R_L, C, jump_
 
     for i in range(test_size):
         window_data = df_grOU[:, i:]
-        theta_hat, HH, H = estimate_grCAR_drift(window_data, Adj_L, W_C, R_L, C, P_, Q_, b, gamma, None, Sigma, with_cov=True, is_global=is_global, is_single=is_single)
+        theta_hat, HH, H = estimate_grOU_drift(window_data, Adj_L, W_C, R_L, C, P_, Q_, b, gamma, None, Sigma, with_cov=True, is_global=is_global, is_single=is_single)
 
         # Fetch parameters
         idx = 0

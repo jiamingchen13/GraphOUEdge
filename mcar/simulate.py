@@ -2,7 +2,7 @@ import numpy as np
 import scipy
 import scipy.linalg
 import scipy.stats
-from typing import Callable, Optional
+from typing import Optional
 
 def reshape_array(array, d):
     if d == 1:
@@ -30,40 +30,6 @@ def MCAR_Q(QQ: np.ndarray) -> np.ndarray:
     for i in range(p):
         Q_QQ[-d:, i * d:(i + 1) * d] = - QQ[p - i - 1]
     return Q_QQ
-
-def simulate_MCAR_stat_distr_approx(Q_QQ: np.ndarray, a: np.ndarray, Sigma: np.ndarray, jumps: Optional[Callable[[float, float], np.ndarray]]):
-    """
-    Approximate a sample from the stationary distribution of the MCAR state X by truncating the infinite integral at T and discretizing it.
-    :param Q_QQ: MCAR state-transition matrix, (pd, pd) np.ndarray
-    :param a: drift of Levy process with truncation function t(z) = 0, i.e. E[L_1] = a + \int_{R^d} x F(dx), (d, ) np.ndarray
-    :param Sigma: covariance of Brownian component of Levy process, (d, d) np.ndarray
-    :param jumps: function for generating n jump increments over an interval delta_t, Callable[[float, float], np.ndarray] instead of distribution of jumps
-    :return x: approximate sample from stationary distribution, (pd, ) np.ndarray
-    """
-    pd = Q_QQ.shape[0]
-    d = a.shape[0]
-
-    # Noise coefficient E
-    E = np.zeros((pd, d))
-    E[-d:,:] = np.eye(d)
-
-    # Approximate integral, choose T depending on |A| (depending on how fast e^As decays)
-    T = - np.log(1e-8) / np.linalg.norm(Q_QQ)
-    N = 1000
-    P = np.linspace(0, T, N+1)
-    delta_t = T/N
-
-    # Generate Levy increments ΔL_k
-    if jumps is None:
-        delta_jump_L = np.zeros((d, N))
-    else:
-        delta_jump_L = jumps(delta_t, N)
-
-    # Brownian + drift
-    delta_L = scipy.stats.multivariate_normal(mean=a * delta_t, cov=Sigma * delta_t).rvs(size=N).T + delta_jump_L
-
-    # Compute contributions: sum_k e^{A t_k} E ΔL_k
-    return np.tensordot(scipy.linalg.expm(np.tensordot(P[:-1], Q_QQ, axes=0)), np.matmul(E, delta_L), axes=[[0, 2], [1, 0]])
     
 def simulate_MCAR_stat_distr_compound_poisson(Q_QQ: np.ndarray, a: np.ndarray, Sigma: np.ndarray, rate: float, jump_F: Optional[scipy.stats._multivariate.multi_rv_frozen]):
     """
@@ -112,79 +78,6 @@ def simulate_MCAR_stat_distr_compound_poisson(Q_QQ: np.ndarray, a: np.ndarray, S
 
     x = a_component + W_component + J_component
     return x
-
-def simulate_MCAR_approx(P: np.ndarray, Q_QQ: np.ndarray, x0: np.ndarray, a: np.ndarray, Sigma: np.ndarray, jumps: Optional[Callable[[float, float], np.ndarray]], output_format: str = 'MCAR', uniform: bool = False):
-    """
-    Simulate discrete paths from an MCAR model with state-transition matrix Q_QQ and driving Levy process (with finite Levy measure) with triplet (b, Sigma, F) using Euler–Maruyama scheme.
-    :param P: partition over which to simulate the MCAR process [0 = t_0, t_1, ..., t_N = T], (N+1, ) np.ndarray
-    :param Q_QQ: MCAR state-transition matrix, (pd, pd) np.ndarray
-    :param x0: state space initial condition, (pd, ) np.ndarray
-    :param a: drift of Levy process with truncation function t(z) = 0, i.e. E[L_1] = a + \int_{R^d} x F(dx), (d, ) np.ndarray
-    :param Sigma: covariance of Brownian component of Levy process, (d, d) np.ndarray
-    :param jumps: function for generating n jump increments over a time interval delta_t, function(delta_t, n) instead of distribution of jumps
-    :param output_format: format of output, str in ['MCAR', 'SS', 'SS + L', 'SS + L + jump_L']
-    :param uniform: if True, treats grid as uniform
-    :return Y: MCAR simulation, (d, N+1) np.ndarray
-            X: MCAR state space simulation (first d entries are Y), (pd, N+1) np.ndarray
-            L: driving Levy process, (d, N+1) np.ndarray
-            jump_L: jumps in the driving Levy process, (d, N+1) np.ndarray
-    """
-    d = len(a)
-    pd = len(x0)
-    N = len(P)
-    
-    # Noise coefficient
-    E = np.zeros((pd, d))
-    E[-d:,:] = np.eye(d)
-    
-    # Initialize
-    X = np.zeros((pd, N))
-    L = np.zeros((d, N))
-    jump_L = np.zeros((d, N))
-    X[:, 0] = x0
-
-    # Simulate driving Brownian noise
-    delta_W = np.sqrt(np.diff(P))[np.newaxis, :] * scipy.stats.multivariate_normal(cov=Sigma).rvs(size=N-1).T
-    delta_L = np.zeros((d, N-1))
-
-    if uniform:
-        delta_t = P[1] - P[0]
-        delta_L = a.reshape(-1, 1) * delta_t + delta_W
-        if jumps is not None:
-            delta_jump_L = jumps(delta_t, N-1)
-            delta_L += delta_jump_L
-            jump_L[:, 1:] = delta_jump_L.cumsum(axis=1)
-
-        # Levy process
-        L[:, 1:] = delta_L.cumsum(axis=1)
-    else:
-        for n in range(N - 1):
-            delta_t = P[n+1] - P[n]
-
-            # Levy increment (continuous and jump parts)
-            delta_L[:, n] = a.reshape(-1, 1) * delta_t + delta_W[:, n]
-            if jumps is not None:
-                delta_jump_L = jumps(delta_t, 1).reshape(-1, 1)
-                delta_L[:, n] = a.reshape(-1, 1) * delta_t + delta_W[:, n] + delta_jump_L
-                jump_L[:, n + 1] = jump_L[:, n] + delta_jump_L
-
-            # Evolve the processes
-            L[:, n + 1] = L[:, n] + delta_L[:, n]
-
-    # Evolve state space
-    for n in range(N - 1):
-        X[:, n + 1] = X[:, n] + np.matmul(Q_QQ, X[:, n]) * delta_t + np.matmul(E, delta_L[:, n])
-
-    if output_format == 'MCAR':
-        return X[:d, :]
-    elif output_format == 'SS':
-        return X
-    elif output_format == 'SS + L':
-        return X, L
-    elif output_format == 'SS + L + jump_L':
-        return X, L, jump_L
-    else:
-        raise ValueError("output_format must be one of ['MCAR', 'SS', 'SS + L', 'SS + L + jump_L']")
 
 def simulate_MCAR_compound_poisson(P: np.ndarray, Q_QQ: np.ndarray, x0: np.ndarray, a: np.ndarray, Sigma: np.ndarray, rate: float, jump_F: Optional[scipy.stats._multivariate.multi_rv_frozen], output_format: str = 'MCAR', uniform: bool = False):
     """
