@@ -8,7 +8,6 @@ import matplotlib.pyplot as plt
 from scipy.stats import gaussian_kde
 from numpy.lib.stride_tricks import sliding_window_view
 from multiprocessing import Pool
-from itertools import combinations
 from datetime import datetime
 from concurrent.futures import ProcessPoolExecutor
 from statsmodels.tsa.ar_model import AutoReg
@@ -56,8 +55,8 @@ def multiprocess_orderbooks(TICKER, input_path, output_path, log_path, check_for
 
     print("started multiprocessing")
 
+    pool = Pool(os.cpu_count())
     try:
-        pool = Pool(os.cpu_count())
         engine = ProcessOrderbook(TICKER, output_path, sample_interval)
         logs = pool.map(engine, csv_orderbook)
     finally:  # To make sure processes are closed in the end, even if errors happen

@@ -620,8 +620,6 @@ def estimate_MCAR(
         elif Model == 'grOU':
             global_QQ_hat_new = estimate_grOU_drift(Y, A, W_C, R_L, C, P, Q, b_hat, gamma) if QQ is None else QQ
             QQ_hat_new = estimator_to_QQ(global_QQ_hat_new, R_L, C, W_C, A, d)
-        else:
-            raise ValueError('Model not recognized')
         DeltaL = recover_BDLP(Y, p, P, Q, QQ_hat_new)
         Sigma_hat = estimate_Sigma_L(DeltaL, Q, gamma) if Sigma is None else Sigma
         if mu_estimator == 'Levy_slope':
