@@ -19,8 +19,8 @@ from mcar.simulate import *
 
 def multiprocess_orderbooks(TICKER, input_path, output_path, log_path, check_for_processed_data=True, sample_interval = '1s'):
     """
-    Pre-process LOBSTER data into feature-response pairs parallely. The data must be stored in the input_path
-    directory as daily message book and order book files. For details of processing steps see description of process_orderbook function.
+    Pre-process LOBSTER data parallely. The data must be stored in the input_path directory as daily message book and order book files.
+    For details of processing steps see description of process_orderbook function.
     A log file is produced tracking:
     - order book files with problems
     - message book files with problems
@@ -32,7 +32,7 @@ def multiprocess_orderbooks(TICKER, input_path, output_path, log_path, check_for
     :param output_path: the path where we wish to save the processed datasets (as .npz files), str
     :param log_path: the path where processing logs are saved, str
     :param check_for_processed_data: check if processed .npz files already exist in output_path and skip these dates for processing, bool
-    :param sample_interval: sample interval
+    :param sample_interval: sample interval, str
     :return: saves the aggregated mid-quote price in output_path, as .npz files with numpy attributes
              "orderbook_features" (:, 1).
     """
@@ -42,7 +42,7 @@ def multiprocess_orderbooks(TICKER, input_path, output_path, log_path, check_for
     csv_orderbook.sort()
     csv_message.sort()
 
-    # do not process already processed data
+    # Do not process already processed data
     if check_for_processed_data:
         npz_file_list = sorted(glob.glob(os.path.join(output_path, "*.{}".format("npz"))))
         processed_dates = [re.search(r'\d{4}-\d{2}-\d{2}', file).group() for file in npz_file_list]
@@ -51,7 +51,7 @@ def multiprocess_orderbooks(TICKER, input_path, output_path, log_path, check_for
         csv_message = [file for file in csv_message if
                        re.search(r'\d{4}-\d{2}-\d{2}', file).group() not in processed_dates]
 
-    # check if exactly half of the files are order book and exactly half are messages
+    # Check if exactly half of the files are order book and exactly half are messages
     assert (len(csv_message) == len(csv_orderbook))
 
     print("started multiprocessing")
@@ -72,7 +72,6 @@ def multiprocess_orderbooks(TICKER, input_path, output_path, log_path, check_for
 
     print("please check processing logs.")
 
-
 class ProcessOrderbook(object):
     """
     Multiprocessing engine for pre-processing LOBSTER data into feature-response npz files.
@@ -87,7 +86,6 @@ class ProcessOrderbook(object):
         output = process_orderbook(orderbook_name, self.TICKER, self.output_path, self.sample_interval)
         return output
 
-
 def process_orderbook(orderbook_name, TICKER, output_path, sample_interval):
     """
     Function carrying out processing of single order book orderbook_name. Features are not normalized.
@@ -100,43 +98,43 @@ def process_orderbook(orderbook_name, TICKER, output_path, sample_interval):
             "ASKp1", "ASKs1", "BIDp1",  "BIDs1" str
     :param TICKER: the TICKER to be considered, str
     :param output_path: the path where we wish to save the processed datasets (as .npz files), str
-    :param sample_interval: sample interval
+    :param sample_interval: sample interval, str
     :return: saves the aggregated mid-quote price in output_path, as .npz files with numpy attributes
              "orderbook_features" (:, 1).
     """
     print(orderbook_name)
     log = ''
 
-    ### load LOBSTER orderbook and message files
+    ## Load LOBSTER orderbook and message files
     try:
         df_orderbook = pd.read_csv(orderbook_name, header=None)
     except:
         return orderbook_name + ' skipped. Error: failed to read orderbook.'
 
-    # compute the mid-quote price
+    # Compute the mid-quote price
     df_orderbook.columns = ["ASKp1", "ASKs1", "BIDp1", "BIDs1"]
     df_orderbook.insert(0, "mid", (df_orderbook["ASKp1"] + df_orderbook["BIDp1"]) / 2)
 
-    # get date
+    # Get date
     match = re.findall(r"\d{4}-\d{2}-\d{2}", orderbook_name)[-1]
     date = datetime.strptime(match, "%Y-%m-%d")
 
-    # read times from message file. keep a record of problematic files
+    # Read times from message file. keep a record of problematic files
     message_name = orderbook_name.replace("orderbook", "message")
     try:
         df_message = pd.read_csv(message_name, usecols=[0, 1, 2, 3, 4, 5], header=None)
     except:
         return orderbook_name + ' skipped. Error: failed to read messagebook.'
 
-    # check the two df have the same length
+    # Check the two df have the same length
     assert (len(df_message) == len(df_orderbook))
 
-    # add column names to message book
+    # Add column names to message book
     df_message.columns = ["seconds", "event type", "order ID", "volume", "price", "direction"]
 
-    ### process potential data anomalies
+    ## Process potential data anomalies
 
-    # 1. remove trading halts
+    # 1. Remove trading halts
     trading_halts_start = df_message[(df_message["event type"] == 7) & (df_message["price"] == -1)].index
     trading_halts_end = df_message[(df_message["event type"] == 7) & (df_message["price"] == 1)].index
     trading_halts_index = np.array([])
@@ -150,7 +148,7 @@ def process_orderbook(orderbook_name, TICKER, output_path, sample_interval):
     df_orderbook = df_orderbook.drop(trading_halts_index)
     df_message = df_message.drop(trading_halts_index)
 
-    # 2. remove crossed quotes
+    # 2. Remove crossed quotes
     crossed_quotes_index = df_orderbook[(df_orderbook["BIDp1"] > df_orderbook["ASKp1"])].index
     if len(crossed_quotes_index) > 0:
         log = log + 'Warning: ' + str(
@@ -158,16 +156,16 @@ def process_orderbook(orderbook_name, TICKER, output_path, sample_interval):
     df_orderbook = df_orderbook.drop(crossed_quotes_index)
     df_message = df_message.drop(crossed_quotes_index)
 
-    # add the seconds since midnight column to the order book from the message book
+    # Add the seconds since midnight column to the order book from the message book
     df_orderbook.insert(0, "seconds", df_message["seconds"])
 
-    # 3. one conceptual event (e.g. limit order modification which is implemented as a cancellation followed
+    # 3. One conceptual event (e.g. limit order modification which is implemented as a cancellation followed
     # by an immediate new arrival, single market order executing against multiple resting limit orders) may
     # appear as multiple rows in the message file, all with the same timestamp.
     # We hence group the order book data by unique timestamps and take the last entry.
     df_orderbook = df_orderbook.groupby(["seconds"]).tail(1)
 
-    # 4. check market opening times for strange values
+    # 4. Check market opening times for strange values
     market_open = int(df_orderbook["seconds"].iloc[0] / 60) / 60  # open at minute before first transaction
     market_close = (int(df_orderbook["seconds"].iloc[-1] / 60) + 1) / 60  # close at minute after last transaction
 
@@ -175,32 +173,30 @@ def process_orderbook(orderbook_name, TICKER, output_path, sample_interval):
         log = log + 'Warning: unusual opening times in ' + orderbook_name + ': ' + str(market_open) + ' - ' + str(
             market_close) + '.\n'
 
-    # drop values outside of market hours
+    # Drop values outside of market hours
     df_orderbook = df_orderbook.loc[(df_orderbook["seconds"] >= 34200) &
                                     (df_orderbook["seconds"] <= 57600)]
 
-    # 5. drop first and last 60 minutes of trading using seconds (do this after orderflow computation)
+    # 5. Drop first and last 60 minutes of trading using seconds (do this after orderflow computation)
     market_open_seconds = market_open * 60 * 60 + 60 * 60
     market_close_seconds = market_close * 60 * 60 - 60 * 60
     df_orderbook = df_orderbook.loc[(df_orderbook["seconds"] >= market_open_seconds) &
                                     (df_orderbook["seconds"] <= market_close_seconds)]
 
-    # 6. downsample tick-by-tick mid-quote price data into sampling, keeping only the last tick in each sample interval with forward-fill
+    # 6. Downsample tick-by-tick mid-quote price data into sampling, keeping only the last tick in each sample interval with forward-fill
     df_orderbook['timestamp'] = pd.to_datetime(df_orderbook['seconds'], unit='s', origin=pd.Timestamp(date))
     df_orderbook = df_orderbook.set_index('timestamp')
     df_orderbook_min = df_orderbook.resample(sample_interval).last().ffill()
 
-    # save
+    # Save
     output_name = os.path.join(output_path, TICKER + "_" + "data" + "_" + str(date.date()) + ".npz")
     np.savez(output_name, timestamps=df_orderbook_min.index.astype('datetime64[s]'), mid=df_orderbook_min['mid'].values)
 
     return log + orderbook_name + ' completed.'
 
-
 def process_day_parallel(arg):
     """
-    Load all assets for a single day in parallel.
-    Returns a DataFrame with timestamps as index and assets as columns.
+    Load all assets for a single day in parallel. Returns a DataFrame with timestamps as index and assets as columns.
     """
     date, assets, base_dir = arg
     results = []
@@ -215,12 +211,10 @@ def process_day_parallel(arg):
     day_df = pd.concat(results, axis=1, join='inner').sort_index()
     return day_df
 
-
 def aggregate_assets(assets, base_dir, out_dir, max_workers_days=None):
     """
     Aggregate log mid-quote price for multiple assets and days using full parallelization.
     - max_workers_days: number of parallel processes for days
-    - max_workers_assets: number of parallel processes for assets within a day
     """
     os.makedirs(out_dir, exist_ok=True)
 
@@ -242,7 +236,6 @@ def aggregate_assets(assets, base_dir, out_dir, max_workers_days=None):
     # Save aggregated dataset
     log_price_path = out_dir + 'log_price.npz'
     np.savez(log_price_path, timestamps=log_price_data.index.astype('datetime64[s]'), **{col: log_price_data[col].values for col in log_price_data.columns})
-
 
 def MRC(Y, delta, theta, is_corr = True):
     """
@@ -287,6 +280,31 @@ def MRC(Y, delta, theta, is_corr = True):
 
     return pd.Series(data, index=labels)
 
+def log_data_to_corr_data(path: str, rule: str, delta = .6, theta = 1, is_corr = True):
+    # Load empirical data
+    data = np.load(path + 'log_price.npz')
+    index = pd.to_datetime(data["timestamps"])
+    columns = [key for key in data.files if key != "timestamps"]
+    log_price_data = pd.DataFrame({col: data[col] for col in columns}, index=index)
+    data.close()
+
+    # Compute modulated realized correlation
+    out = {}
+
+    for timestamp, group in log_price_data.resample(rule):
+        res = MRC(group, delta, theta, is_corr)
+        if res is None:
+            continue
+        out[timestamp] = res
+
+    corr_data = pd.DataFrame.from_dict(out, orient='index')
+    if is_corr:
+        np.savez(path + 'corr.npz', timestamps=corr_data.index,
+             **{col: corr_data[col].values for col in corr_data.columns})
+    else:
+        np.savez(path + 'cov.npz', timestamps=corr_data.index,
+                 **{col: corr_data[col].values for col in corr_data.columns})
+
 def adjacency_matrices(A, n):
     """
     Compute all adjacency matrices up to distance n.
@@ -294,17 +312,19 @@ def adjacency_matrices(A, n):
     :param n: maximum distance
     :return: list of binary matrices [A1, A2, ..., An]
     """
-    reach = (A > 0).astype(int)       # distance <= 1
-    results = [reach.copy()]          # list of distance-exact adjacency
+    # Distance <= 1
+    reach = (A > 0).astype(int)
+    # List of distance-exact adjacency
+    results = [reach.copy()]
     cumulative = reach.copy()
-    for k in range(2, n+1):
-        # paths of length k
+    for k in range(2, n + 1):
+        # Paths of length k
         Ak = (reach @ A > 0).astype(int)
 
-        # remove already reachable
+        # Remove already reachable
         Ak = Ak * (1 - cumulative)
 
-        # zero diagonal for no loops
+        # Zero diagonal for no loops
         np.fill_diagonal(Ak, 0)
 
         results.append(Ak.copy())
@@ -343,148 +363,22 @@ def adj_to_line_graph(adj, TICKERS):
     np.fill_diagonal(B, 0)
     return [B, edges_]
 
-def line_graph(cov_data, TICKERS, corr_thres = 0.25, ratio_thres = 0.1):
-    """
-    Construct the line graph adjacency matrix given covariance/variance data
-    :param cov_data: covariance/variance data
-    :param TICKERS: list of tickers
-    :param corr_thres: predefined correlation threshold, float
-    :param ratio_thres: predefined ratio threshold, float
-    :return: [line graph adjacency matrix, asset pair for each edge]
-    """
-    pairs = list(combinations(TICKERS, 2))
-    corr_list = []
-
-    # Record the correlation between assets as the value of edges
-    for t, row in cov_data.iterrows():
-        r = row.values
-        corr_vals = {pair[0] + '_' + pair[1]: r[cov_data.columns.get_loc(pair[0] + '_' + pair[1])] / (
-                    (r[cov_data.columns.get_loc(pair[0] + '_' + pair[0])] * r[cov_data.columns.get_loc(pair[1] + '_' + pair[1])]) ** .5) for pair in pairs}
-        corr_list.append(pd.Series(corr_vals, name=t))
-    corr_df = pd.DataFrame(corr_list)
-
-    # Compute the ratio of the number of realized correlations exceed the correlation threshold
-    s = (abs(corr_df) > corr_thres).sum(axis=0) / corr_df.shape[0]
-    edges = []
-    for pair, value in s.items():
-        i, j = pair.split('_')
-        edges.append((i, j, value))
-
-    df_edges = pd.DataFrame(edges, columns=['from', 'to', 'weight'])
-
-    # Initialize adjacency matrix
-    adjacency = pd.DataFrame(0, index=TICKERS, columns=TICKERS)
-
-    # Fill in adjacency matrix where ratio > ratio_thres
-    for _, row in df_edges.iterrows():
-        if abs(row['weight']) > ratio_thres:
-            adjacency.loc[row['from'], row['to']] = 1
-            adjacency.loc[row['to'], row['from']] = 1  # make symmetric
-
-    n = adjacency.shape[0]
-    edges = [(i, j) for i in range(n) for j in range(i + 1, n) if adjacency.iloc[i, j] == 1]
-    m = len(edges)
-    edges_ = [adjacency.columns[edge[0]] + '_' + adjacency.columns[edge[1]] for edge in edges]
-    M = np.zeros((n, m), dtype=int)
-    for e_idx, (i, j) in enumerate(edges):
-        M[i, e_idx] = 1
-        M[j, e_idx] = 1
-
-    B = M.T @ M
-    np.fill_diagonal(B, 0)
-    return [B, edges_]
-
-def log_data_to_corr_data(path: str, rule: str, delta = .6, theta = 1, is_corr = True):
-    # Load empirical data
-    data = np.load(path + 'log_price.npz')
-    index = pd.to_datetime(data["timestamps"])
-    columns = [key for key in data.files if key != "timestamps"]
-    log_price_data = pd.DataFrame({col: data[col] for col in columns}, index=index)
-    data.close()
-
-    # Compute modulated realized correlation
-    out = {}
-
-    for timestamp, group in log_price_data.resample(rule):
-        res = MRC(group, delta, theta, is_corr)
-        if res is None:
-            continue
-        out[timestamp] = res
-
-    corr_data = pd.DataFrame.from_dict(out, orient='index')
-    if is_corr:
-        np.savez(path + 'corr.npz', timestamps=corr_data.index,
-             **{col: corr_data[col].values for col in corr_data.columns})
-    else:
-        np.savez(path + 'cov.npz', timestamps=corr_data.index,
-                 **{col: corr_data[col].values for col in corr_data.columns})
-
-
-def kalman_filter_mcar(Y, A, Sigma, P_):
+def kalman_filter_mcar_BM(Y, Q_QQ, Sigma, P_, Q_, QQ_hat, gamma):
     """
     Y: (d, N+1) observations at time grid
-    A: (pd, pd) MCAR matrix
+    Q_QQ: (pd, pd) MCAR matrix
     Sigma: (d, d) Brownian covariance of Levy process
     P_: (N+1, ) observation times
-
-    Returns m_filtered, P_filtered: lists of length n+1
+    Q_: (M+1, ) coarser grid
+    QQ_hat: estimated MCAR parameters, list of p (d, d) np.ndarray
+    gamma: hyperparameter for defining the critical region
+    Returns the last value of m_filtered, (pd, ) np.ndarray
     """
-    d, n = Y.shape[0], Y.shape[1] - 1
-    pd = A.shape[0]
-
-    # Build Sigma_tilde = E Sigma E^T, with E[-d:,:] = I_d
-    E = np.zeros((pd, d))
-    E[-d:, :] = np.eye(d)
-    Sigma_tilde = E @ Sigma @ E.T
-
-    M = np.zeros((2 * pd, 2 * pd))
-    M[:pd, :pd] = A
-    M[:pd, pd:] = Sigma_tilde
-    M[pd:, pd:] = -A.T
-    H = np.zeros((d, pd))
-    H[:, :d] = np.eye(d)
-
-    delta = P_[1] - P_[0]
-    expM = scipy.linalg.expm(M * delta)
-    F_k = scipy.linalg.expm(A * delta)
-    Q_k = expM[:pd, pd:] @ F_k.T
-
-    # Initial prior
-    m = np.zeros(pd)
-    P = np.eye(pd)
-    m_filtered = [m.copy()]
-
-    for k in range(n):
-        # 1) Prediction
-        m_pred = F_k @ m
-        P_pred = F_k @ P @ F_k.T + Q_k
-
-        # 2) Update
-        v = Y[:, k + 1] - H @ m_pred
-        S = H @ P_pred @ H.T
-        K = P_pred @ H.T @ np.linalg.pinv(S)
-
-        m = m_pred + K @ v
-        P = P_pred - K @ S @ K.T
-
-        m_filtered.append(m.copy())
-
-    return m_filtered[-1]
-
-def kalman_filter_mcar_BM(Y, A, Sigma, P_, Q_, AA_hat, gamma):
-    """
-    Y: (d, N+1) observations at time grid
-    A: (pd, pd) MCAR matrix
-    Sigma: (d, d) Brownian covariance of Levy process
-    P_: (N+1, ) observation times
-
-    Returns m_filtered, P_filtered: lists of length n+1
-    """
-    d= Y.shape[0]
-    pd = A.shape[0]
+    d = Y.shape[0]
+    pd = Q_QQ.shape[0]
     p = int(pd / d)
 
-    DeltaL_Q = recover_BDLP(Y, p, P_, Q_, AA_hat)
+    DeltaL_Q = recover_BDLP(Y, p, P_, Q_, QQ_hat)
     DeltaW, DeltaQ_W = disentangle_BM(DeltaL_Q, Q_, Sigma, gamma)
     Q_index = np.searchsorted(Q_, np.cumsum(DeltaQ_W), side="left")
     Y_Q = Y[:, Q_index]
@@ -495,9 +389,9 @@ def kalman_filter_mcar_BM(Y, A, Sigma, P_, Q_, AA_hat, gamma):
     Sigma_tilde = E @ Sigma @ E.T
 
     M = np.zeros((2 * pd, 2 * pd))
-    M[:pd, :pd] = A
+    M[:pd, :pd] = Q_QQ
     M[:pd, pd:] = Sigma_tilde
-    M[pd:, pd:] = -A.T
+    M[pd:, pd:] = -Q_QQ.T
     H = np.zeros((d, pd))
     H[:, :d] = np.eye(d)
 
@@ -508,7 +402,7 @@ def kalman_filter_mcar_BM(Y, A, Sigma, P_, Q_, AA_hat, gamma):
 
     for k in range(len(DeltaQ_W)):
         expM = scipy.linalg.expm(M * DeltaQ_W[k])
-        F_k = scipy.linalg.expm(A * DeltaQ_W[k])
+        F_k = scipy.linalg.expm(Q_QQ * DeltaQ_W[k])
         Q_k = expM[:pd, pd:] @ F_k.T
 
         # 1) Prediction
@@ -528,9 +422,9 @@ def kalman_filter_mcar_BM(Y, A, Sigma, P_, Q_, AA_hat, gamma):
     return m_filtered[-1]
 
 def worker(arg):
-    delta, forecast_step, jump_activity, gamma = arg
+    delta, forecast_step, gamma = arg
     # Load the correlation/covariance data
-    data = np.load('./data/LOBSTERdata/output/train/aggregate/cov.npz', allow_pickle=True)
+    data = np.load('./data/LOBSTERdata/output/train/aggregate/corr.npz', allow_pickle=True)
     index = pd.to_datetime(data['timestamps'])
     _data = pd.DataFrame({key: data[key] for key in data.files if key != 'timestamps'}, index=index)
 
@@ -551,7 +445,7 @@ def worker(arg):
     Q_ = np.append(P_[::delta], P_[-1]) if (Y.shape[1] - 1) % delta != 0 else P_[::delta]
 
     # Testing data
-    test_data = np.load('./data/LOBSTERdata/output/test/aggregate/cov.npz', allow_pickle=True)
+    test_data = np.load('./data/LOBSTERdata/output/test/aggregate/corr.npz', allow_pickle=True)
     test_index = pd.to_datetime(test_data['timestamps'])
     test_data_ = pd.DataFrame({key: test_data[key] for key in test_data.files if key != 'timestamps'}, index=test_index)
     test_Y = test_data_[Adj[1]].T
@@ -559,12 +453,11 @@ def worker(arg):
     test_size = test_set.shape[0]
 
     RMSE_UAR, direction_acc_UAR = UAR_model(Y, test_set, K, test_size, forecast_step)
-    RMSE_grOU, direction_acc_grOU =  grOU_edge_model(Y, Adj, test_set, K, test_size, forecast_step, [1], 1, jump_activity, P_, Q_, gamma, is_global=False)
+    RMSE_grOU, direction_acc_grOU =  grOU_edge_model(Y, Adj, test_set, K, test_size, forecast_step, [1], 1, P_, Q_, gamma, is_global=False)
     return direction_acc_grOU - direction_acc_UAR, A, (RMSE_grOU-RMSE_UAR)/RMSE_UAR
 
-
 def model_pred_single(args):
-    index_, K, sim_Y, sim_test, adj_sim, forecast_step, P_Q_ratio, jump_activity, gamma = args
+    index_, K, sim_Y, sim_test, adj_sim, forecast_step, P_Q_ratio, gamma = args
 
     sim_test_set = sliding_window_view(sim_test, (K, forecast_step))[0]
     sim_test_size = sim_test_set.shape[0]
@@ -585,17 +478,16 @@ def model_pred_single(args):
 
     start = time.perf_counter()
     RMSE_row[2], direction_row[2] = OU_edge_model(sim_Y, sim_test_set, K, sim_test_size, forecast_step, [1],
-                                    1, jump_activity, P_sim, Q_sim, gamma, is_global=False)
+                                    1, P_sim, Q_sim, gamma, is_global=False)
     comp_row[2] = time.perf_counter() - start
 
     start = time.perf_counter()
     RMSE_row[3], direction_row[3] = grOU_edge_model(sim_Y, adj_sim, sim_test_set, K, sim_test_size, forecast_step,
-                                            [1], 1, jump_activity, P_sim, Q_sim, gamma, is_global=False)
+                                            [1], 1, P_sim, Q_sim, gamma, is_global=False)
     comp_row[3] = time.perf_counter() - start
 
     RMSE_row[4] = NA_model(sim_Y, sim_test_set, forecast_step)
     return index_, RMSE_row, direction_row, comp_row
-
 
 def model_pred(test_size, adj_sim, forecast_step, P_Q_ratio, gamma, label, scenario):
     with open('./data/LOBSTERdata/output/sim/' + scenario + '/MCAR_CP.npy', 'rb') as f:
@@ -624,7 +516,6 @@ def model_pred(test_size, adj_sim, forecast_step, P_Q_ratio, gamma, label, scena
         np.save(f, direction_acc)
     with open('./data/LOBSTERdata/output/sim/' + scenario + '/time_' + label + '.npy', 'wb') as f:
         np.save(f, comp_time)
-
 
 def boxplot_(scenario):
     with open('./data/LOBSTERdata/output/sim/' + scenario + '/MCAR_CP.npy', 'rb') as f:
@@ -733,7 +624,6 @@ def boxplot_(scenario):
     plt.show()
     fig.savefig('./data/LOBSTERdata/output/sim/' + scenario + '/boxplot_grOU.eps', bbox_inches='tight', format='eps')
 
-
 def UAR_model(Y, test_set, K, test_size, forecast_step, lag = None):
     # Univariate AR Edge Model
 
@@ -774,7 +664,7 @@ def VAR_model(Y, test_set, K, test_size, forecast_step):
     df_VAR = np.array(Y.T.copy())
     model = VAR(df_VAR)
 
-    # automatic lag selection by AIC
+    # Automatic lag selection by AIC
     best_lag_var = model.select_order(maxlags=6).aic
 
     forecast_VAR = np.zeros((test_size, K, forecast_step))
@@ -845,16 +735,16 @@ def OU_edge_model(Y, test_set, K, test_size, forecast_step, R_L, C, P_, Q_, gamm
             else:
                 raise NotImplementedError("method must be among 'backward', 'naive' or 'kalman'.")
 
-        # make prediction
-        # compute noise coefficient E, Sigma_tilde
+        # Make prediction
+        # Compute noise coefficient E, Sigma_tilde
         E = np.zeros([K * len(R_L), K])
         E[-K:, :] = np.eye(K)
 
-        # initialize
+        # Initialize
         X = np.zeros([K * len(R_L), forecast_step + 1])
         X[:, 0] = x0
 
-        # precompute for speed-up
+        # Precompute for speed-up
         eA = scipy.linalg.expm(Q_Q)
         A_inv = np.linalg.pinv(Q_Q)
         eAt = scipy.linalg.fractional_matrix_power(eA, P_[1] - P_[0]).real
@@ -935,16 +825,16 @@ def grOU_edge_model(Y, Adj, test_set, K, test_size, forecast_step, R_L, C, P_, Q
             else:
                 raise NotImplementedError("method must be among 'backward', 'naive' or 'kalman'.")
 
-        # make prediction
-        # compute noise coefficient E, Sigma_tilde
+        # Make prediction
+        # Compute noise coefficient E, Sigma_tilde
         E = np.zeros([K * len(R_L), K])
         E[-K:, :] = np.eye(K)
 
-        # initialize
+        # Initialize
         X_ = np.zeros([K * len(R_L), forecast_step + 1])
         X_[:, 0] = x0
 
-        # precompute for speed-up
+        # Precompute for speed-up
         eA = scipy.linalg.expm(Q_Q)
         A_inv = np.linalg.pinv(Q_Q)
         eAt = scipy.linalg.fractional_matrix_power(eA, P_[1] - P_[0]).real
