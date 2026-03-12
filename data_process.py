@@ -423,7 +423,7 @@ def kalman_filter_mcar_BM(Y, Q_QQ, Sigma, P_, Q_, QQ_hat, gamma):
 def worker(arg):
     delta, forecast_step, gamma = arg
     # Load the correlation/covariance data
-    data = np.load('./data/LOBSTERdata/output/train/aggregate/corr.npz', allow_pickle=True)
+    data = np.load('./data/LOBSTERdata/output/train/aggregate/cov.npz', allow_pickle=True)
     index = pd.to_datetime(data['timestamps'])
     _data = pd.DataFrame({key: data[key] for key in data.files if key != 'timestamps'}, index=index)
 
@@ -444,7 +444,7 @@ def worker(arg):
     Q_ = np.append(P_[::delta], P_[-1]) if (Y.shape[1] - 1) % delta != 0 else P_[::delta]
 
     # Testing data
-    test_data = np.load('./data/LOBSTERdata/output/test/aggregate/corr.npz', allow_pickle=True)
+    test_data = np.load('./data/LOBSTERdata/output/test/aggregate/cov.npz', allow_pickle=True)
     test_index = pd.to_datetime(test_data['timestamps'])
     test_data_ = pd.DataFrame({key: test_data[key] for key in test_data.files if key != 'timestamps'}, index=test_index)
     test_Y = test_data_[Adj[1]].T
@@ -503,7 +503,7 @@ def model_pred(test_size, adj_sim, forecast_step, P_Q_ratio, gamma, label, scena
 
     args_list = [(i, data.shape[1], data[i, :, :-test_size], data[i, :, -test_size:], adj_sim, forecast_step, P_Q_ratio,
                   gamma) for i in range(n)]
-    with Pool(os.cpu_count() - 4) as pool:
+    with Pool(os.cpu_count()) as pool:
         for idx, rmse_row, dir_row, comp_row in pool.imap_unordered(model_pred_single, args_list):
             RMSE[idx] = rmse_row
             direction_acc[idx] = dir_row
@@ -728,8 +728,8 @@ def OU_edge_model(Y, test_set, K, test_size, forecast_step, R_L, C, P_, Q_, gamm
                 x0 =np.append(window_data[:, -1], [0] * K * (len(R_L) - 1))
             elif method == 'kalman':
                 # Kalman - filter
-                AA_hat = [np.diag([x] * K) for x in theta_hat_OU]
-                x0 = kalman_filter_mcar_BM(window_data, Q_Q, Sigma_OU, P_, Q_, AA_hat, gamma)
+                QQ_hat = [np.diag([x] * K) for x in theta_hat_OU]
+                x0 = kalman_filter_mcar_BM(window_data, Q_Q, Sigma_OU, P_, Q_, QQ_hat, gamma)
                 x0[:K] = window_data[:, -1]
             else:
                 raise NotImplementedError("method must be among 'backward', 'naive' or 'kalman'.")
@@ -744,12 +744,12 @@ def OU_edge_model(Y, test_set, K, test_size, forecast_step, R_L, C, P_, Q_, gamm
         X[:, 0] = x0
 
         # Precompute for speed-up
-        eA = scipy.linalg.expm(Q_Q)
-        A_inv = np.linalg.pinv(Q_Q)
-        eAt = scipy.linalg.fractional_matrix_power(eA, P_[1] - P_[0]).real
+        eQ = scipy.linalg.expm(Q_Q)
+        Q_inv = np.linalg.pinv(Q_Q)
+        eQt = scipy.linalg.fractional_matrix_power(eQ, P_[1] - P_[0]).real
 
         for n in range(forecast_step):
-            X[:, n + 1] = eAt.dot(X[:, n]) + (eAt - np.eye(K * len(R_L))).dot(A_inv).dot(E).dot(b_OU)
+            X[:, n + 1] = eQt.dot(X[:, n]) + (eQt - np.eye(K * len(R_L))).dot(Q_inv).dot(E).dot(b_OU)
 
         forecast_OU[i, :, :] = np.array(X[:K, 1:])
         df_OU = np.append(df_OU, test_set[i, :, 0:1], axis=1)
@@ -818,8 +818,8 @@ def grOU_edge_model(Y, Adj, test_set, K, test_size, forecast_step, R_L, C, P_, Q
                 x0 =np.append(window_data[:, -1], [0] * K * (len(R_L) - 1))
             elif method == 'kalman':
                 # Kalman - filter
-                AA_hat = estimator_to_QQ(theta_hat, R_L, C, W_C, Adj_L, K)
-                x0 = kalman_filter_mcar_BM(window_data, Q_Q, Sigma, P_, Q_, AA_hat, gamma)
+                QQ_hat = estimator_to_QQ(theta_hat, R_L, C, W_C, Adj_L, K)
+                x0 = kalman_filter_mcar_BM(window_data, Q_Q, Sigma, P_, Q_, QQ_hat, gamma)
                 x0[:K] = window_data[:, -1]
             else:
                 raise NotImplementedError("method must be among 'backward', 'naive' or 'kalman'.")
@@ -834,12 +834,12 @@ def grOU_edge_model(Y, Adj, test_set, K, test_size, forecast_step, R_L, C, P_, Q
         X_[:, 0] = x0
 
         # Precompute for speed-up
-        eA = scipy.linalg.expm(Q_Q)
-        A_inv = np.linalg.pinv(Q_Q)
-        eAt = scipy.linalg.fractional_matrix_power(eA, P_[1] - P_[0]).real
+        eQ = scipy.linalg.expm(Q_Q)
+        Q_inv = np.linalg.pinv(Q_Q)
+        eQt = scipy.linalg.fractional_matrix_power(eQ, P_[1] - P_[0]).real
 
         for n in range(forecast_step):
-            X_[:, n + 1] = eAt.dot(X_[:, n]) + (eAt - np.eye(K * len(R_L))).dot(A_inv).dot(E).dot(b)
+            X_[:, n + 1] = eQt.dot(X_[:, n]) + (eQt - np.eye(K * len(R_L))).dot(Q_inv).dot(E).dot(b)
 
         forecast_grOU[i, :, :] = np.array(X_[:K, 1:])
         df_grOU = np.append(df_grOU, test_set[i, :, 0:1], axis=1)
