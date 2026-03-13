@@ -533,7 +533,7 @@ def estimate_MCAR(
         C: int,
         gamma: float,
         epsilon: float = 0.01,
-        max_iter: int = 200,
+        max_iter: int = 100,
         QQ: np.ndarray = None,
         b: np.ndarray = None,
         Sigma: np.ndarray = None,

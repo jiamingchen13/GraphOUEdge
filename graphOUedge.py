@@ -52,7 +52,8 @@ class GraphOUEdge:
 
     def _simulate_one(self, args):
         """Helper function for parallel execution."""
-        regime, sample_idx, rate = args
+        regime, sample_idx, rate, seed = args
+        np.random.seed(seed)
         if regime == 'BM':
             x0 = simulate_MCAR_stat_distr_compound_poisson(self.Q_Q, self.b, self.Sigma, 0, self.jump_F)
             path = simulate_MCAR_compound_poisson(np.linspace(0, self.T, self.N + 1), self.Q_Q, x0, self.b, self.Sigma, 0, self.jump_F, uniform=True)
@@ -69,7 +70,7 @@ class GraphOUEdge:
             return None
         return sample_idx, path
 
-    def simulate(self, regime: str, n_samples: int, rate: float = 0, n_jobs: int = None):
+    def simulate(self, regime: str, n_samples: int, seed: int, rate: float = 0, n_jobs: int = None):
         """Simulate and save the sample paths."""
         if np.array_equal(self.Q_Q, np.zeros((self.L * self.K, self.L * self.K))):
             print('Run method Q_matrix first before simulation. (set b and Sigma as well)')
@@ -77,17 +78,17 @@ class GraphOUEdge:
         MCAR = np.zeros((n_samples, self.K, self.N + 1))
         if n_jobs is None:
             n_jobs = cpu_count()
-        args_list = [(regime, i, rate) for i in range(n_samples)]
+        args_list = [(regime, i, rate, seed + i) for i in range(n_samples)]
         with Pool(processes = n_jobs) as pool:
             for sample_idx, path in pool.imap_unordered(self._simulate_one, args_list, chunksize=10):
                 MCAR[sample_idx, :, :] = path
-        with open(os.path.join(self.data_dir, f'MCAR_{regime}.npy'), 'wb') as f:
-            np.save(f, MCAR)
+
+        return MCAR
 
     def estimate_unknown_Levy(self, Y, P_, Q_, model, is_global=False):
         """Estimate and save the parameters of unknown Levy process."""
 
-        QQ_hat, (b_hat, Sigma_hat) = estimate_MCAR(Model = model, Y=Y, P=P_, Q=Q_, A=self.Adj, W_C=self.W_C, R_L=self.R_L,
+        QQ_hat, (b_hat, Sigma_hat) = estimate_MCAR(Model=model, Y=Y, P=P_, Q=Q_, A=self.Adj, W_C=self.W_C, R_L=self.R_L,
                                                    C=self.C, gamma=self.gamma, is_global=is_global)
         DeltaL = recover_BDLP(Y=Y, p=self.L, P=P_, Q=Q_, QQ=QQ_hat)
         F_mean_hat = estimate_integral_Levy_measure(DeltaL, Q=Q_, gamma=self.gamma, Sigma=Sigma_hat, K=lambda x: True, f=lambda x: x)

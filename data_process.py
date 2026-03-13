@@ -455,6 +455,24 @@ def worker(arg):
     RMSE_grOU, direction_acc_grOU =  grOU_edge_model(Y, Adj, test_set, K, test_size, forecast_step, [1], 1, P_, Q_, gamma, is_global=False)
     return direction_acc_grOU - direction_acc_UAR, A, (RMSE_grOU-RMSE_UAR)/RMSE_UAR
 
+def process_one_sim(arg):
+    P, R_L, K, C, Y, adj_L_sim, W_C_sim, gamma = arg
+    result = np.zeros((3, K * len(R_L) + sum(R_L)))
+
+    for n in range(1, 4):
+        T = 2 ** n
+        subset_P = slice(0, int(8 ** 7 / 2 ** (3 - n)) + 1, 2 ** (6 * (3 - n)))
+        P_ = P[subset_P]  # delta_P = T^(-6)
+        Q_ = P_[::T ** 4]  # delta_Q = T^(-2)
+        Y_ = Y[:, subset_P]
+
+        X_sim_sol = GraphOUEdge(R_L, K, C, adj_L_sim, W_C_sim, gamma, 'data\\LOBSTERdata\\output\\sim')
+        b_sim_sol, Sigma_sim_sol = X_sim_sol.estimate_unknown_Levy(Y_, P_, Q_, 'grOU')
+        theta_hat_sim_sol, _, _ = estimate_grOU_drift(Y_, adj_L_sim, W_C_sim, R_L, C, P_, Q_, b_sim_sol, gamma,
+                                                      None, Sigma_sim_sol, with_cov=True, is_global=False)
+        result[n - 1, :] = theta_hat_sim_sol.reshape(-1)
+    return result
+
 def model_pred_single(args):
     index_, K, sim_Y, sim_test, adj_sim, forecast_step, P_Q_ratio, gamma = args
 
@@ -488,13 +506,11 @@ def model_pred_single(args):
     RMSE_row[4] = NA_model(sim_Y, sim_test_set, forecast_step)
     return index_, RMSE_row, direction_row, comp_row
 
-def model_pred(test_size, adj_sim, forecast_step, P_Q_ratio, gamma, label, scenario):
-    with open('./data/LOBSTERdata/output/sim/' + scenario + '/MCAR_CP.npy', 'rb') as f:
-        data = np.load(f)
+def model_pred(data, test_size, adj_sim, forecast_step, P_Q_ratio, gamma, label, scenario):
     if label == 'missing_5':
-        data = data[:,1:,:]
+        data = data[:, 1:, :]
     elif label == 'missing_1':
-        data = data[:,:-1,:]
+        data = data[:, :-1, :]
 
     n = data.shape[0]
     RMSE = np.zeros((n, 5))
@@ -516,9 +532,7 @@ def model_pred(test_size, adj_sim, forecast_step, P_Q_ratio, gamma, label, scena
     with open('./data/LOBSTERdata/output/sim/' + scenario + '/time_' + label + '.npy', 'wb') as f:
         np.save(f, comp_time)
 
-def boxplot_(scenario):
-    with open('./data/LOBSTERdata/output/sim/' + scenario + '/MCAR_CP.npy', 'rb') as f:
-        sim = np.load(f)
+def boxplot_(sim, scenario):
     plt.plot(sim[0, :, :].T)
     plt.savefig('./data/LOBSTERdata/output/sim/' + scenario + '/sample_path.eps', bbox_inches='tight', format='eps')
 
