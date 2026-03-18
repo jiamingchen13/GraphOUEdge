@@ -364,6 +364,111 @@ def estimate_OU_drift(Y: np.ndarray, R_L: List, C: int, P: np.ndarray, Q: np.nda
     else:
         return vec_theta_hat
 
+def estimate_MCAR_drift(Y: np.ndarray, R_L: List, P: np.ndarray, Q: np.ndarray, b: np.ndarray, gamma: float, nu: np.ndarray = None,
+                        with_cov: bool = False, Sigma: np.ndarray = None):
+    """
+    Estimate MCAR drift parameters from the realisation of a MCAR process with driving Levy triplet (b, Sigma, F).
+    Here the Levy drift parameter b corresponds to no truncation t(x) = 0 when the process has finite jump activity, thus E[L_1] = b + \int_{R^d} z F(dz).
+
+    :param Y: MCAR process observation, (d, N+1) np.ndarray
+    :param R_L: Maximum stage for each Lag, List
+    :param P: finer partition over which we observe the MCAR process [0 = s_0, ..., s_N = t], (N+1, ) np.ndarray
+    :param Q: coarser partition over which to approximate the integrals [0 = u_0, ..., u_M = T], (M+1, ) np.ndarray
+    :param b: drift parameter of Levy process, (d, ) np.ndarray
+    :param gamma: hyperparameter for defining the critical region >1, float
+    :param nu: thresholding sequence, (d, M) np.ndarray
+    :param with_cov: whether to return the vectorized estimator with its estimated covariance, bool
+    :param Sigma: covariance matrix of the driving Levy process - only needed if with_cov is True, (d, d) np.ndarray
+    :return if with_cov is True:
+                vec_QQ_hat: vectorized estimated MCAR drift parameters, (pd ** 2, ) np.ndarray
+                KK: estimated covariance of the estimated MCAR parameters, (pd ** 2, pd ** 2) np.ndarray
+            else:
+                QQ_hat: estimated MCAR drift parameters, list of p (d, d) np.ndarray
+    """
+    p = len(R_L)
+    d = Y.shape[0]
+
+    if not all([u in P for u in Q]):
+        raise ValueError('P must be refinement of Q.')
+    indices = [False] * len(P)
+    j = 0
+    for i, s in enumerate(P):
+        if s == Q[j]:
+            indices[i] = True
+            j += 1
+    X = state_space(Y, p, P)
+    X = X[:, indices]
+    x0 = X[:, 0]
+
+    if with_cov and Sigma is not None:
+        # Compute inverse of Sigma
+        Sigma_inv = np.linalg.pinv(Sigma)
+    elif with_cov and Sigma is None:
+        # Estimate Sigma from data
+        QQ_hat = estimate_MCAR_drift(Y, R_L, P, Q, b, gamma, with_cov=False)
+        DeltaL = recover_BDLP(Y, p, P, Q, QQ_hat)
+        Sigma_hat = estimate_Sigma_L(DeltaL, Q, gamma)
+        Sigma_inv = np.linalg.pinv(Sigma_hat)
+    else:
+        # No need to use Sigma if cov is not needed
+        Sigma_inv = np.eye(d)
+
+    # Get P_0-continuous martingale part of last d entries of state space representation, i.e. of the p-1-th derivative of OU realisation
+    DY = np.diff(X[-d:, :] - x0[-d:].reshape(-1, 1) - b.reshape(-1, 1) * Q.reshape(1, -1))
+
+    # If nu is not provided choose from data
+    if nu is None:
+        nu = np.zeros_like(DY)
+        for i in range(d):
+            nu[i, :] = choose_nu(DY[i:i + 1, :], Q, gamma)
+
+    # Get thresholded increments
+    DY_thresh = DY * (np.abs(DY) < nu)
+
+    # Compute K
+    K = np.zeros(p * d ** 2)
+    for k in range(p):
+        for i in range(d):
+            integral = np.zeros((d,))
+            # (i+1)-th entry of D^{p-k}Y
+            integrand = X[-(k + 1) * d + i, :]
+            for j in range(d):
+                # left-hand Riemann sum (converges in L2 to Ito Integral)
+                integral[j] = np.sum(integrand[:-1] * DY_thresh[j, :])
+            K[k * d ** 2 + i * d:k * d ** 2 + (i + 1) * d] = - np.matmul(Sigma_inv, integral).reshape(-1)
+
+    # compute [K]
+    KK = np.zeros((p * d ** 2, p * d ** 2))
+    for k in range(p):
+        for i in range(d):
+            for l in range(p):
+                for j in range(d):
+                    # (i+1)-th entry of D^{p-k}Y
+                    integrand_one = X[-(k + 1) * d + i, :]
+                    # (j+1)-th entry of D^{p-l}Y
+                    integrand_two = X[-(l + 1) * d + j, :]
+                    # left-hand Riemann sum (converges a.s. to Riemann Integral, for any choice of mid-point)
+                    integral = np.sum(integrand_one[:-1] * integrand_two[:-1] * np.diff(Q))
+                    KK[k * d ** 2 + i * d:k * d ** 2 + (i + 1) * d, l * d ** 2 + j * d:l * d ** 2 + (
+                                j + 1) * d] = Sigma_inv * integral
+
+    vec_QQ_hat = np.matmul(np.linalg.pinv(KK), K)
+
+    if with_cov and Sigma is not None:
+        return vec_QQ_hat, KK, K
+    elif with_cov and Sigma is None:
+        return vec_QQ_hat, KK, Sigma_hat
+    else:
+        QQ_hat = inv_vectorize_AA(vec_QQ_hat, p)
+        return QQ_hat
+
+def inv_vectorize_AA(vec_AA: np.ndarray, p: int):
+    d = int(np.sqrt(len(vec_AA) // p))
+    AA = []
+    for i in range(p):
+        AA.append(vec_AA[i*d**2:(i+1)*d**2].reshape((d, d)).T)
+    return np.array(AA)
+
 def recover_BDLP(Y: np.ndarray, p: int, P: np.ndarray, Q: np.ndarray, QQ: np.ndarray):
     """
     Recover the increments of the background driving Levy process L over coarser partition Q from MCAR observation Y over finer partition P with parameters QQ.
@@ -420,8 +525,12 @@ def disentangle_BM(DeltaL: np.ndarray, Q: np.ndarray, Sigma: np.ndarray, gamma: 
     DeltaQ = np.diff(Q)
     N = len(DeltaQ)
     DeltaX = DeltaL
-    subset = np.einsum('ki,ki->i', DeltaX, np.linalg.pinv(Sigma).dot(DeltaX)) <= 2 * gamma * DeltaQ * np.log(N)
-
+    try:
+        subset = np.einsum('ki,ki->i', DeltaX, np.linalg.pinv(Sigma).dot(DeltaX)) <= 2 * gamma * DeltaQ * np.log(N)
+    except:
+        eps = 1e-6
+        Sigma_reg = Sigma + eps * np.eye(Sigma.shape[0])
+        subset = np.einsum('ki,ki->i', DeltaX, np.linalg.pinv(Sigma_reg).dot(DeltaX)) <= 2 * gamma * DeltaQ * np.log(N)
     # Return Brownian increments
     DeltaQ_W = DeltaQ[subset]
     DeltaW = DeltaX[:, subset]
@@ -590,6 +699,8 @@ def estimate_MCAR(
     elif Model == 'grOU':
         global_QQ_hat = estimate_grOU_drift(Y, A, W_C, R_L, C, P, Q, b_hat, gamma) if QQ is None else QQ
         QQ_hat = estimator_to_QQ(global_QQ_hat, R_L, C, W_C, A, d)
+    elif Model == 'MCAR':
+        QQ_hat = estimate_MCAR_drift(Y, R_L, P, Q, b_hat, gamma) if QQ is None else QQ
     else:
         raise ValueError('Model not recognized')
     DeltaL = recover_BDLP(Y, p, P, Q, QQ_hat)
@@ -620,6 +731,8 @@ def estimate_MCAR(
         elif Model == 'grOU':
             global_QQ_hat_new = estimate_grOU_drift(Y, A, W_C, R_L, C, P, Q, b_hat, gamma) if QQ is None else QQ
             QQ_hat_new = estimator_to_QQ(global_QQ_hat_new, R_L, C, W_C, A, d)
+        elif Model == "MCAR":
+            QQ_hat_new = estimate_MCAR_drift(Y, R_L, P, Q, b_hat, gamma) if QQ is None else QQ
         DeltaL = recover_BDLP(Y, p, P, Q, QQ_hat_new)
         Sigma_hat = estimate_Sigma_L(DeltaL, Q, gamma) if Sigma is None else Sigma
         if mu_estimator == 'Levy_slope':

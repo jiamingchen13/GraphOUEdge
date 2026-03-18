@@ -5,7 +5,7 @@ import re
 import time
 import pandas as pd
 import matplotlib.pyplot as plt
-from scipy.stats import gaussian_kde
+from scipy.stats import gaussian_kde, norm
 from numpy.lib.stride_tricks import sliding_window_view
 from multiprocessing import Pool
 from datetime import datetime
@@ -451,8 +451,8 @@ def worker(arg):
     test_set = sliding_window_view(test_Y, (K, forecast_step))[0]
     test_size = test_set.shape[0]
 
-    RMSE_UAR, direction_acc_UAR = UAR_model(Y, test_set, K, test_size, forecast_step)
-    RMSE_grOU, direction_acc_grOU =  grOU_edge_model(Y, Adj, test_set, K, test_size, forecast_step, [1], 1, P_, Q_, gamma, is_global=False)
+    _, _, RMSE_UAR, direction_acc_UAR = UAR_model(Y, test_set, K, test_size, forecast_step)
+    _, _, RMSE_grOU, direction_acc_grOU =  grOU_edge_model(Y, Adj, test_set, K, test_size, forecast_step, [1], 1, P_, Q_, gamma, is_global=False)
     return direction_acc_grOU - direction_acc_UAR, A, (RMSE_grOU-RMSE_UAR)/RMSE_UAR
 
 def process_one_sim(arg):
@@ -466,8 +466,7 @@ def process_one_sim(arg):
         Q_ = P_[::T ** 4]  # delta_Q = T^(-2)
         Y_ = Y[:, subset_P]
 
-        X_sim_sol = GraphOUEdge(R_L, K, C, adj_L_sim, W_C_sim, gamma, 'data\\LOBSTERdata\\output\\sim')
-        b_sim_sol, Sigma_sim_sol = X_sim_sol.estimate_unknown_Levy(Y_, P_, Q_, 'grOU')
+        _, (b_sim_sol, Sigma_sim_sol) = estimate_MCAR('grOU', Y_, P_, Q_, adj_L_sim, W_C_sim, R_L, C, gamma)
         theta_hat_sim_sol, _, _ = estimate_grOU_drift(Y_, adj_L_sim, W_C_sim, R_L, C, P_, Q_, b_sim_sol, gamma,
                                                       None, Sigma_sim_sol, with_cov=True, is_global=False)
         result[n - 1, :] = theta_hat_sim_sol.reshape(-1)
@@ -481,29 +480,35 @@ def model_pred_single(args):
     P_sim = np.array([i for i in range(sim_Y.shape[1])])
     Q_sim = np.append(P_sim[::P_Q_ratio], P_sim[-1]) if (sim_Y.shape[1] - 1) % P_Q_ratio != 0 else P_sim[::P_Q_ratio]
 
-    RMSE_row = np.zeros(5)
-    direction_row = np.zeros(4)
-    comp_row = np.zeros(4)
+    RMSE_row = np.zeros(6)
+    direction_row = np.zeros(5)
+    comp_row = np.zeros(5)
 
     start = time.perf_counter()
-    RMSE_row[0], direction_row[0] = UAR_model(sim_Y, sim_test_set, K, sim_test_size, forecast_step)
+    _, _, RMSE_row[0], direction_row[0] = UAR_model(sim_Y, sim_test_set, K, sim_test_size, forecast_step)
     comp_row[0] = time.perf_counter() - start
 
     start = time.perf_counter()
-    RMSE_row[1], direction_row[1] = VAR_model(sim_Y, sim_test_set, K, sim_test_size, forecast_step)
+    _, _, RMSE_row[1], direction_row[1] = VAR_model(sim_Y, sim_test_set, K, sim_test_size, forecast_step)
     comp_row[1] = time.perf_counter() - start
 
     start = time.perf_counter()
-    RMSE_row[2], direction_row[2] = OU_edge_model(sim_Y, sim_test_set, K, sim_test_size, forecast_step, [1],
+    _, _, RMSE_row[2], direction_row[2] = OU_edge_model(sim_Y, sim_test_set, K, sim_test_size, forecast_step, [1],
                                     1, P_sim, Q_sim, gamma, is_global=False)
     comp_row[2] = time.perf_counter() - start
 
     start = time.perf_counter()
-    RMSE_row[3], direction_row[3] = grOU_edge_model(sim_Y, adj_sim, sim_test_set, K, sim_test_size, forecast_step,
+    _, _, RMSE_row[3], direction_row[3] = grOU_edge_model(sim_Y, adj_sim, sim_test_set, K, sim_test_size, forecast_step,
                                             [1], 1, P_sim, Q_sim, gamma, is_global=False)
     comp_row[3] = time.perf_counter() - start
 
-    RMSE_row[4] = NA_model(sim_Y, sim_test_set, forecast_step)
+    start = time.perf_counter()
+    _, _, RMSE_row[4], direction_row[4] = MCAR_edge_model(sim_Y, sim_test_set, K, sim_test_size, forecast_step, P_sim,
+                                            Q_sim, [1], 1, gamma)
+    comp_row[4] = time.perf_counter() - start
+
+    RMSE_row[5] = NA_model(sim_Y, sim_test_set, forecast_step)
+
     return index_, RMSE_row, direction_row, comp_row
 
 def model_pred(data, test_size, adj_sim, forecast_step, P_Q_ratio, gamma, label, scenario):
@@ -513,9 +518,9 @@ def model_pred(data, test_size, adj_sim, forecast_step, P_Q_ratio, gamma, label,
         data = data[:, :-1, :]
 
     n = data.shape[0]
-    RMSE = np.zeros((n, 5))
-    direction_acc = np.zeros((n, 4))
-    comp_time = np.zeros((n, 4))
+    RMSE = np.zeros((n, 6))
+    direction_acc = np.zeros((n, 5))
+    comp_time = np.zeros((n, 5))
 
     args_list = [(i, data.shape[1], data[i, :, :-test_size], data[i, :, -test_size:], adj_sim, forecast_step, P_Q_ratio,
                   gamma) for i in range(n)]
@@ -553,10 +558,10 @@ def boxplot_(sim, scenario):
 
         fig, ax = plt.subplots(1, 2, figsize=(12, 6))
 
-        positions = np.arange(1, 6)
+        positions = np.arange(1, 7)
         ax[0].boxplot(RMSE[:, :], positions=positions, widths=0.3, showfliers=False)
 
-        for j in range(5):
+        for j in range(6):
             kde = gaussian_kde(RMSE[:, j], bw_method=0.4)
             low, high = np.percentile(RMSE[:, j], [1, 99])
             x_vals = np.linspace(low, high, 100)
@@ -566,11 +571,11 @@ def boxplot_(sim, scenario):
             ax[0].plot(positions[j] + density, x_vals)
 
         ax[0].set_xticks(positions)
-        ax[0].set_xticklabels(['Univariate AR', 'VAR', 'Univariate OU', 'graph OU', 'Baseline'])
+        ax[0].set_xticklabels(['Univariate AR', 'VAR', 'Univariate OU', 'graph OU', 'MCAR OU', 'Baseline'])
         ax[0].set_ylabel('RMSE')
         ax[0].set_title("Boxplot and Side Density for RMSE: " + label)
 
-        positions = np.arange(1, 5)
+        positions = np.arange(1, 6)
         ax[1].boxplot(direction_acc, positions=positions, widths=0.3)
 
         for k in range(4):
@@ -582,7 +587,7 @@ def boxplot_(sim, scenario):
             ax[1].plot(positions[k] + density, x_vals)
 
         ax[1].set_xticks(positions)
-        ax[1].set_xticklabels(['Univariate AR', 'VAR', 'Univariate OU', 'graph OU'])
+        ax[1].set_xticklabels(['Univariate AR', 'VAR', 'Univariate OU', 'graph OU', 'MCAR OU'])
         ax[1].set_ylabel('Directional accuracy')
         ax[1].set_title("Boxplot and Side Density for directional accuracy: " + label)
 
@@ -637,6 +642,44 @@ def boxplot_(sim, scenario):
     plt.show()
     fig.savefig('./data/LOBSTERdata/output/sim/' + scenario + '/boxplot_grOU.eps', bbox_inches='tight', format='eps')
 
+def dm_test(y, yhat1, yhat2, loss='rmse', h=1, q=None):
+    # y, yhat*: arrays (T,K)
+    y = np.squeeze(y)
+    yhat1 = np.squeeze(yhat1)
+    yhat2 = np.squeeze(yhat2)
+    if loss.lower() == 'rmse':
+        e1 = y - yhat1
+        e2 = y - yhat2
+        L1 = np.sqrt(np.mean(e1**2, axis=1))
+        L2 = np.sqrt(np.mean(e2**2, axis=1))
+    elif loss.lower() == 'mse':
+        e1 = y - yhat1
+        e2 = y - yhat2
+        L1 = np.mean(e1**2, axis=1)
+        L2 = np.mean(e2**2, axis=1)
+    elif loss.lower() == 'dir':
+        L1 = (y != yhat1).mean(axis=1)
+        L2 = (y != yhat2).mean(axis=1)
+    else:
+        raise ValueError("loss in {'rmse','dir', 'mse'}")
+    d = L1 - L2
+    T = d.shape[0]
+    d_bar = d.mean()
+    if q is None:
+        q = max(h-1, 0)
+    d_c = np.squeeze(d - d_bar)
+    gamma0 = np.dot(d_c, d_c) / T
+    if q == 0:
+        S = gamma0
+    else:
+        gammas = [np.dot(d_c[j:], d_c[:-j]) / T for j in range(1, q+1)]
+        S = gamma0 + 2 * sum(gammas)
+    DM = d_bar / np.sqrt(S / T)
+    hln = np.sqrt((T + 1 - 2*h + h*(h-1)/T) / T)
+    DM_hln = DM * hln
+    pval = 2*(1 - norm.cdf(np.abs(DM_hln)))
+    return DM_hln, pval
+
 def UAR_model(Y, test_set, K, test_size, forecast_step, lag = None):
     # Univariate AR Edge Model
 
@@ -669,7 +712,7 @@ def UAR_model(Y, test_set, K, test_size, forecast_step, lag = None):
     forecast_AR_dir = np.sign(np.diff(np.append(last_, forecast_AR, axis=2), axis=2))
     test_set_dir = np.sign(np.diff(np.append(last_, test_set, axis=2), axis=2))
 
-    return RMSE_AR, (test_set_dir == forecast_AR_dir).mean()
+    return forecast_AR, forecast_AR_dir, RMSE_AR, (test_set_dir == forecast_AR_dir).mean()
 
 def VAR_model(Y, test_set, K, test_size, forecast_step):
     # VAR Edge Model
@@ -696,7 +739,7 @@ def VAR_model(Y, test_set, K, test_size, forecast_step):
     forecast_VAR_dir = np.sign(np.diff(np.append(last_, forecast_VAR, axis=2), axis=2))
     test_set_dir = np.sign(np.diff(np.append(last_, test_set, axis=2), axis=2))
 
-    return RMSE_VAR, (test_set_dir == forecast_VAR_dir).mean()
+    return forecast_VAR, forecast_VAR_dir, RMSE_VAR, (test_set_dir == forecast_VAR_dir).mean()
 
 def NA_model(Y, test_set, forecast_step):
     # Naive Model
@@ -705,7 +748,69 @@ def NA_model(Y, test_set, forecast_step):
 
     RMSE_NA = np.sqrt(np.mean((forecast_NA - test_set) ** 2))
 
-    return RMSE_NA
+    return forecast_NA, RMSE_NA
+
+def MCAR_edge_model(Y, test_set, K, test_size, forecast_step, P_, Q_, R_L, C, gamma, method = 'naive'):
+    # MCAR edge model
+
+    forecast_MCAR = np.zeros((test_size, K, forecast_step))
+    A = np.array([np.zeros((K, K)) for _ in range(max(R_L))])
+    W_C = edge_weight(A)
+    df_MCAR = np.array(Y.copy())
+    _, (b_MCAR, Sigma_MCAR) = estimate_MCAR('MCAR', Y, P_, Q_, A, W_C, R_L, C, gamma)
+
+    for i in range(test_size):
+        window_data = df_MCAR[:, i:]
+        QQ_hat = estimate_MCAR_drift(Y, R_L, P_, Q_, b_MCAR, gamma, Sigma = Sigma_MCAR)
+        Q_Q = MCAR_Q(QQ_hat)
+
+        if len(R_L) == 1:
+            x0 = window_data[:, -1]
+        else:
+            if method == 'backward':
+                # Backward - differences
+                flip_window = state_space(np.flip(window_data[:, -len(R_L):], axis=1), len(R_L), P_[-len(R_L):])
+                x0 = flip_window[:, 0] * np.repeat((-1) ** np.arange(len(R_L)), flip_window.shape[0] / len(R_L))
+            elif method == 'naive':
+                # Naive initialization
+                x0 =np.append(window_data[:, -1], [0] * K * (len(R_L) - 1))
+            elif method == 'kalman':
+                # Kalman - filter
+                x0 = kalman_filter_mcar_BM(window_data, Q_Q, Sigma_MCAR, P_, Q_, QQ_hat, gamma)
+                x0[:K] = window_data[:, -1]
+            else:
+                raise NotImplementedError("method must be among 'backward', 'naive' or 'kalman'.")
+
+        # Make prediction
+        # Compute noise coefficient E, Sigma_tilde
+        E = np.zeros([K * len(R_L), K])
+        E[-K:, :] = np.eye(K)
+
+        # Initialize
+        X = np.zeros([K * len(R_L), forecast_step + 1])
+        X[:, 0] = x0
+
+        # Precompute for speed-up
+        eQ = scipy.linalg.expm(Q_Q)
+        Q_inv = np.linalg.pinv(Q_Q)
+        eQt = scipy.linalg.fractional_matrix_power(eQ, P_[1] - P_[0]).real
+
+        for n in range(forecast_step):
+            X[:, n + 1] = eQt.dot(X[:, n]) + (eQt - np.eye(K * len(R_L))).dot(Q_inv).dot(E).dot(b_MCAR)
+
+        forecast_MCAR[i, :, :] = np.array(X[:K, 1:])
+        df_MCAR = np.append(df_MCAR, test_set[i, :, 0:1], axis=1)
+
+    with open(os.path.join('data\\LOBSTERdata\\output\\train\\aggregate', f'forecast_MCAR_{len(R_L)}_{method}.npy'), 'wb') as f:
+        np.save(f, forecast_MCAR)
+
+    RMSE_MCAR = np.sqrt(np.mean((forecast_MCAR - test_set) ** 2))
+
+    last_ = np.append(np.array(Y.copy())[:, -1].reshape(-1, 1)[np.newaxis, :, :], test_set[:-1, :, 0:1], axis=0)
+    forecast_MCAR_dir = np.sign(np.diff(np.append(last_, forecast_MCAR, axis=2), axis=2))
+    test_set_dir = np.sign(np.diff(np.append(last_, test_set, axis=2), axis=2))
+
+    return forecast_MCAR, forecast_MCAR_dir, RMSE_MCAR, 0.5 if (last_==forecast_MCAR).all() else (test_set_dir == forecast_MCAR_dir).mean()
 
 def OU_edge_model(Y, test_set, K, test_size, forecast_step, R_L, C, P_, Q_, gamma, method = 'naive',
                   is_global = False, print_param = False, is_test=False):
@@ -716,7 +821,7 @@ def OU_edge_model(Y, test_set, K, test_size, forecast_step, R_L, C, P_, Q_, gamm
     Adj_L_OU = np.array([np.zeros((K, K)) for _ in range(max(R_L))])
     W_C_OU = edge_weight(Adj_L_OU)
     X_OU = GraphOUEdge(R_L, K, C, Adj_L_OU, W_C_OU, gamma, 'data\\LOBSTERdata\\output\\train\\aggregate')
-    b_OU, Sigma_OU = X_OU.estimate_unknown_Levy(Y, P_, Q_, 'OU')
+    _, (b_OU, Sigma_OU) = estimate_MCAR('OU', Y, P_, Q_, Adj_L_OU, W_C_OU, R_L, C, gamma, is_global=is_global)
     alphas_OU = []
 
     if is_test:
@@ -724,7 +829,7 @@ def OU_edge_model(Y, test_set, K, test_size, forecast_step, R_L, C, P_, Q_, gamm
 
     for i in range(test_size):
         window_data = df_OU[:, i:]
-        theta_hat_OU, HH, H = estimate_OU_drift(window_data, R_L, C, P_, Q_, b_OU, gamma, None, Sigma_OU, with_cov=True, is_global=is_global)
+        theta_hat_OU, _, _ = estimate_OU_drift(window_data, R_L, C, P_, Q_, b_OU, gamma, None, Sigma_OU, with_cov=True, is_global=is_global)
         X_OU.alpha_set(theta_hat_OU)
         X_OU.beta_set([[0] * stage * C for stage in R_L])
         Q_Q = X_OU.Q_matrix(False)
@@ -780,7 +885,7 @@ def OU_edge_model(Y, test_set, K, test_size, forecast_step, R_L, C, P_, Q_, gamm
     if print_param:
         return np.array(alphas_OU)
     else:
-        return RMSE_OU, 0.5 if (last_==forecast_OU).all() else (test_set_dir == forecast_OU_dir).mean()
+        return forecast_OU, forecast_OU_dir, RMSE_OU, 0.5 if (last_==forecast_OU).all() else (test_set_dir == forecast_OU_dir).mean()
 
 def grOU_edge_model(Y, Adj, test_set, K, test_size, forecast_step, R_L, C, P_, Q_, gamma, method = 'naive',
                     is_global=False, print_param=False, is_test=False):
@@ -793,7 +898,7 @@ def grOU_edge_model(Y, Adj, test_set, K, test_size, forecast_step, R_L, C, P_, Q
     W_C = edge_weight(Adj_L)
 
     X = GraphOUEdge(R_L, K, C, Adj_L, W_C, gamma, 'data\\LOBSTERdata\\output\\train\\aggregate')
-    b, Sigma = X.estimate_unknown_Levy(Y, P_, Q_, 'grOU')
+    _, (b, Sigma) = estimate_MCAR('grOU', Y, P_, Q_, Adj_L, W_C, R_L, C, gamma, is_global=is_global)
     forecast_grOU = np.zeros((test_size, K, forecast_step))
     df_grOU = np.array(Y.copy())
     alphas = []
@@ -804,7 +909,7 @@ def grOU_edge_model(Y, Adj, test_set, K, test_size, forecast_step, R_L, C, P_, Q
 
     for i in range(test_size):
         window_data = df_grOU[:, i:]
-        theta_hat, HH, H = estimate_grOU_drift(window_data, Adj_L, W_C, R_L, C, P_, Q_, b, gamma, None, Sigma, with_cov=True, is_global=is_global)
+        theta_hat, _, _ = estimate_grOU_drift(window_data, Adj_L, W_C, R_L, C, P_, Q_, b, gamma, None, Sigma, with_cov=True, is_global=is_global)
 
         # Fetch parameters
         idx = 0
@@ -870,4 +975,4 @@ def grOU_edge_model(Y, Adj, test_set, K, test_size, forecast_step, R_L, C, P_, Q
     if print_param:
        return alphas, betas
     else:
-       return RMSE_grOU, 0.5 if (last_==forecast_grOU).all() else (test_set_dir == forecast_grOU_dir).mean()
+       return forecast_grOU, forecast_grOU_dir, RMSE_grOU, 0.5 if (last_==forecast_grOU).all() else (test_set_dir == forecast_grOU_dir).mean()

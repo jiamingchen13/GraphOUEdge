@@ -1,5 +1,5 @@
-import os
 from multiprocessing import Pool, cpu_count
+from functools import partial
 from mcar.simulate import *
 from mcar.estimate import *
 
@@ -20,6 +20,7 @@ class GraphOUEdge:
         self.b = np.zeros(K)    # Initial b in the Levy triplet
         self.Sigma = np.eye(K)  # Initial Sigma in the Levy triplet
         self.jump_F = scipy.stats.multivariate_normal(mean=np.zeros(K), cov=scale * np.eye(K))  # Initial jump distribution for finitely many jumps
+        self.jumps = partial(gamma_increments, shape=1, scale=1, d=K)  # Initial jump increment function for infinitely many jumps
         self.log2T = 3  # Number of different time lengths
         self.T = T # Total duration
         self.N = self.T ** 7 # Number of partitions
@@ -58,15 +59,13 @@ class GraphOUEdge:
             x0 = simulate_MCAR_stat_distr_compound_poisson(self.Q_Q, self.b, self.Sigma, 0, self.jump_F)
             path = simulate_MCAR_compound_poisson(np.linspace(0, self.T, self.N + 1), self.Q_Q, x0, self.b, self.Sigma, 0, self.jump_F, uniform=True)
         elif regime == 'CP':
-            try:
-                assert rate > 0
-            except AssertionError:
-                print('Need positive rate.')
-                return None
             x0 = simulate_MCAR_stat_distr_compound_poisson(self.Q_Q, self.b, self.Sigma, rate, self.jump_F)
             path = simulate_MCAR_compound_poisson(np.linspace(0, self.T, self.N + 1), self.Q_Q, x0, self.b, self.Sigma, rate, self.jump_F, uniform=True)
+        elif regime == 'Gamma':
+            x0 = simulate_MCAR_stat_distr_approx(self.Q_Q, self.b, self.Sigma, self.jumps)
+            path = simulate_MCAR_approx(np.linspace(0, self.T, self.N + 1), self.Q_Q, x0, self.b, self.Sigma, self.jumps, uniform=True)
         else:
-            print("Regime must be 'BM' or 'CP'.")
+            print("Regime must be 'BM', 'CP' or 'Gamma'.")
             return None
         return sample_idx, path
 
@@ -74,7 +73,7 @@ class GraphOUEdge:
         """Simulate and save the sample paths."""
         if np.array_equal(self.Q_Q, np.zeros((self.L * self.K, self.L * self.K))):
             print('Run method Q_matrix first before simulation. (set b and Sigma as well)')
-            return
+            return None
         MCAR = np.zeros((n_samples, self.K, self.N + 1))
         if n_jobs is None:
             n_jobs = cpu_count()
@@ -84,26 +83,3 @@ class GraphOUEdge:
                 MCAR[sample_idx, :, :] = path
 
         return MCAR
-
-    def estimate_unknown_Levy(self, Y, P_, Q_, model, is_global=False):
-        """Estimate and save the parameters of unknown Levy process."""
-
-        QQ_hat, (b_hat, Sigma_hat) = estimate_MCAR(Model=model, Y=Y, P=P_, Q=Q_, A=self.Adj, W_C=self.W_C, R_L=self.R_L,
-                                                   C=self.C, gamma=self.gamma, is_global=is_global)
-        DeltaL = recover_BDLP(Y=Y, p=self.L, P=P_, Q=Q_, QQ=QQ_hat)
-        F_mean_hat = estimate_integral_Levy_measure(DeltaL, Q=Q_, gamma=self.gamma, Sigma=Sigma_hat, K=lambda x: True, f=lambda x: x)
-        F_squared_hat = estimate_integral_Levy_measure(DeltaL, Q=Q_, gamma=self.gamma, Sigma=Sigma_hat, K=lambda x: True, f=lambda x: np.outer(x, x))
-
-        with open(os.path.join(self.data_dir, f'MCAR_estimates_Sigma.npy'), 'wb') as f:
-            np.save(f, Sigma_hat)
-
-        with open(os.path.join(self.data_dir, f'MCAR_estimates_b.npy'), 'wb') as f:
-            np.save(f, b_hat)
-
-        with open(os.path.join(self.data_dir, f'MCAR_estimates_F_squared.npy'), 'wb') as f:
-            np.save(f, F_squared_hat)
-
-        with open(os.path.join(self.data_dir, f'MCAR_estimates_F_mean.npy'), 'wb') as f:
-            np.save(f, F_mean_hat)
-
-        return b_hat, Sigma_hat
