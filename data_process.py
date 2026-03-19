@@ -569,7 +569,7 @@ def boxplot_(sim, scenario):
 
         for j in range(7):
             kde = gaussian_kde(RMSE[:, j], bw_method=0.4)
-            low, high = np.percentile(RMSE[:, j], [1, 99])
+            low, high = np.percentile(RMSE[:, j], [5, 95])
             x_vals = np.linspace(low, high, 100)
             density = kde(x_vals)
             density = density / density.max() * 0.25
