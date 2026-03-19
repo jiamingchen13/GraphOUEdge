@@ -1,3 +1,4 @@
+import os
 from multiprocessing import Pool, cpu_count
 from functools import partial
 from mcar.simulate import *
@@ -81,5 +82,8 @@ class GraphOUEdge:
         with Pool(processes = n_jobs) as pool:
             for sample_idx, path in pool.imap_unordered(self._simulate_one, args_list, chunksize=10):
                 MCAR[sample_idx, :, :] = path
+
+        with open(os.path.join(self.data_dir, f'MCAR_{regime}.npy'), 'wb') as f:
+            np.save(f, MCAR)
 
         return MCAR

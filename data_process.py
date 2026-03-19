@@ -480,9 +480,9 @@ def model_pred_single(args):
     P_sim = np.array([i for i in range(sim_Y.shape[1])])
     Q_sim = np.append(P_sim[::P_Q_ratio], P_sim[-1]) if (sim_Y.shape[1] - 1) % P_Q_ratio != 0 else P_sim[::P_Q_ratio]
 
-    RMSE_row = np.zeros(6)
-    direction_row = np.zeros(5)
-    comp_row = np.zeros(5)
+    RMSE_row = np.zeros(7)
+    direction_row = np.zeros(6)
+    comp_row = np.zeros(6)
 
     start = time.perf_counter()
     _, _, RMSE_row[0], direction_row[0] = UAR_model(sim_Y, sim_test_set, K, sim_test_size, forecast_step)
@@ -493,13 +493,12 @@ def model_pred_single(args):
     comp_row[1] = time.perf_counter() - start
 
     start = time.perf_counter()
-    _, _, RMSE_row[2], direction_row[2] = OU_edge_model(sim_Y, sim_test_set, K, sim_test_size, forecast_step, [1],
-                                    1, P_sim, Q_sim, gamma, is_global=False)
+    _, _, RMSE_row[2], direction_row[2] = GNAR_model(sim_Y, 1, sim_test_set, sim_test_size, forecast_step)
     comp_row[2] = time.perf_counter() - start
 
     start = time.perf_counter()
-    _, _, RMSE_row[3], direction_row[3] = grOU_edge_model(sim_Y, adj_sim, sim_test_set, K, sim_test_size, forecast_step,
-                                            [1], 1, P_sim, Q_sim, gamma, is_global=False)
+    _, _, RMSE_row[3], direction_row[3] = OU_edge_model(sim_Y, sim_test_set, K, sim_test_size, forecast_step, [1],
+                                    1, P_sim, Q_sim, gamma, is_global=False)
     comp_row[3] = time.perf_counter() - start
 
     start = time.perf_counter()
@@ -507,7 +506,12 @@ def model_pred_single(args):
                                             Q_sim, [1], 1, gamma)
     comp_row[4] = time.perf_counter() - start
 
-    RMSE_row[5] = NA_model(sim_Y, sim_test_set, forecast_step)
+    start = time.perf_counter()
+    _, _, RMSE_row[5], direction_row[5] = grOU_edge_model(sim_Y, adj_sim, sim_test_set, K, sim_test_size, forecast_step,
+                                            [1], 1, P_sim, Q_sim, gamma, is_global=False)
+    comp_row[5] = time.perf_counter() - start
+
+    _, RMSE_row[6] = NA_model(sim_Y, sim_test_set, forecast_step)
 
     return index_, RMSE_row, direction_row, comp_row
 
@@ -518,9 +522,9 @@ def model_pred(data, test_size, adj_sim, forecast_step, P_Q_ratio, gamma, label,
         data = data[:, :-1, :]
 
     n = data.shape[0]
-    RMSE = np.zeros((n, 6))
-    direction_acc = np.zeros((n, 5))
-    comp_time = np.zeros((n, 5))
+    RMSE = np.zeros((n, 7))
+    direction_acc = np.zeros((n, 6))
+    comp_time = np.zeros((n, 6))
 
     args_list = [(i, data.shape[1], data[i, :, :-test_size], data[i, :, -test_size:], adj_sim, forecast_step, P_Q_ratio,
                   gamma) for i in range(n)]
@@ -541,27 +545,29 @@ def boxplot_(sim, scenario):
     plt.plot(sim[0, :, :].T)
     plt.savefig('./data/LOBSTERdata/output/sim/' + scenario + '/sample_path.eps', bbox_inches='tight', format='eps')
 
-    grOU_RMSE = np.zeros((1000, 3))
-    grOU_direction_acc = np.zeros((1000, 3))
+    grOU_RMSE = np.zeros((sim.shape[0], 3))
+    grOU_direction_acc = np.zeros((sim.shape[0], 3))
 
     for i, label in enumerate(['correct', 'missing_5', 'missing_1']):
         with open('./data/LOBSTERdata/output/sim/' + scenario + '/rmse_' + label + '.npy', 'rb') as f:
             RMSE = np.load(f)
-        grOU_RMSE[:, i] = RMSE[:, 3]
+            RMSE = RMSE[~np.isnan(RMSE).any(axis=1)]
+        grOU_RMSE[:, i] = RMSE[:, 5]
 
         with open('./data/LOBSTERdata/output/sim/' + scenario + '/dir_' + label + '.npy', 'rb') as f:
             direction_acc = np.load(f)
-        grOU_direction_acc[:, i] = direction_acc[:, 3]
+            direction_acc = direction_acc[~np.isnan(direction_acc).any(axis=1)]
+        grOU_direction_acc[:, i] = direction_acc[:, 5]
 
         with open('./data/LOBSTERdata/output/sim/' + scenario + '/time_' + label + '.npy', 'rb') as f:
             comp_time = np.load(f)
 
         fig, ax = plt.subplots(1, 2, figsize=(12, 6))
 
-        positions = np.arange(1, 7)
+        positions = np.arange(1, 8)
         ax[0].boxplot(RMSE[:, :], positions=positions, widths=0.3, showfliers=False)
 
-        for j in range(6):
+        for j in range(7):
             kde = gaussian_kde(RMSE[:, j], bw_method=0.4)
             low, high = np.percentile(RMSE[:, j], [1, 99])
             x_vals = np.linspace(low, high, 100)
@@ -571,14 +577,14 @@ def boxplot_(sim, scenario):
             ax[0].plot(positions[j] + density, x_vals)
 
         ax[0].set_xticks(positions)
-        ax[0].set_xticklabels(['Univariate AR', 'VAR', 'Univariate OU', 'graph OU', 'MCAR OU', 'Baseline'])
+        ax[0].set_xticklabels(['UAR', 'VAR', 'GNAR', 'OU', 'MCAR', 'grOU', 'Baseline'])
         ax[0].set_ylabel('RMSE')
         ax[0].set_title("Boxplot and Side Density for RMSE: " + label)
 
-        positions = np.arange(1, 6)
+        positions = np.arange(1, 7)
         ax[1].boxplot(direction_acc, positions=positions, widths=0.3)
 
-        for k in range(4):
+        for k in range(6):
             kde = gaussian_kde(direction_acc[:, k], bw_method=0.4)
             x_vals = np.linspace(min(direction_acc[:, k]), max(direction_acc[:, k]), 100)
             density = kde(x_vals)
@@ -587,7 +593,7 @@ def boxplot_(sim, scenario):
             ax[1].plot(positions[k] + density, x_vals)
 
         ax[1].set_xticks(positions)
-        ax[1].set_xticklabels(['Univariate AR', 'VAR', 'Univariate OU', 'graph OU', 'MCAR OU'])
+        ax[1].set_xticklabels(['UAR', 'VAR', 'GNAR', 'OU', 'MCAR', 'grOU'])
         ax[1].set_ylabel('Directional accuracy')
         ax[1].set_title("Boxplot and Side Density for directional accuracy: " + label)
 
@@ -598,7 +604,7 @@ def boxplot_(sim, scenario):
         df = pd.DataFrame(
             [np.mean(RMSE, axis=0), np.std(RMSE, axis=0), np.mean(direction_acc, axis=0), np.std(direction_acc, axis=0),
              np.mean(comp_time, axis=0), np.std(comp_time, axis=0)],
-            columns=['Univariate AR', 'VAR', 'Univariate OU', 'graph OU', 'Baseline'],
+            columns=['UAR', 'VAR', 'GNAR', 'OU', 'MCAR', 'grOU', 'Baseline'],
             index=['RMSE_mean', 'RMSE_std', 'Directional_accuracy_mean', 'Directional_accuracy_std',
                    'Computational_time_mean', 'Computational_time_std'])
         print(label)
@@ -644,40 +650,37 @@ def boxplot_(sim, scenario):
 
 def dm_test(y, yhat1, yhat2, loss='rmse', h=1, q=None):
     # y, yhat*: arrays (T,K)
-    y = np.squeeze(y)
-    yhat1 = np.squeeze(yhat1)
-    yhat2 = np.squeeze(yhat2)
     if loss.lower() == 'rmse':
         e1 = y - yhat1
         e2 = y - yhat2
-        L1 = np.sqrt(np.mean(e1**2, axis=1))
-        L2 = np.sqrt(np.mean(e2**2, axis=1))
+        L1 = np.sqrt(np.mean(e1 ** 2, axis=(1,2)))
+        L2 = np.sqrt(np.mean(e2 ** 2, axis=(1,2)))
     elif loss.lower() == 'mse':
         e1 = y - yhat1
         e2 = y - yhat2
-        L1 = np.mean(e1**2, axis=1)
-        L2 = np.mean(e2**2, axis=1)
+        L1 = np.mean(e1 ** 2, axis=(1,2))
+        L2 = np.mean(e2 ** 2, axis=(1,2))
     elif loss.lower() == 'dir':
-        L1 = (y != yhat1).mean(axis=1)
-        L2 = (y != yhat2).mean(axis=1)
+        L1 = (y != yhat1).mean(axis=(1,2))
+        L2 = (y != yhat2).mean(axis=(1,2))
     else:
         raise ValueError("loss in {'rmse','dir', 'mse'}")
     d = L1 - L2
     T = d.shape[0]
     d_bar = d.mean()
     if q is None:
-        q = max(h-1, 0)
+        q = max(h - 1, 0)
     d_c = np.squeeze(d - d_bar)
     gamma0 = np.dot(d_c, d_c) / T
     if q == 0:
         S = gamma0
     else:
-        gammas = [np.dot(d_c[j:], d_c[:-j]) / T for j in range(1, q+1)]
+        gammas = [np.dot(d_c[j:], d_c[:-j]) / T for j in range(1, q + 1)]
         S = gamma0 + 2 * sum(gammas)
     DM = d_bar / np.sqrt(S / T)
-    hln = np.sqrt((T + 1 - 2*h + h*(h-1)/T) / T)
+    hln = np.sqrt((T + 1 - 2 * h + h * (h - 1) / T) / T)
     DM_hln = DM * hln
-    pval = 2*(1 - norm.cdf(np.abs(DM_hln)))
+    pval = 2 * (1 - norm.cdf(np.abs(DM_hln)))
     return DM_hln, pval
 
 def UAR_model(Y, test_set, K, test_size, forecast_step, lag = None):
@@ -740,6 +743,52 @@ def VAR_model(Y, test_set, K, test_size, forecast_step):
     test_set_dir = np.sign(np.diff(np.append(last_, test_set, axis=2), axis=2))
 
     return forecast_VAR, forecast_VAR_dir, RMSE_VAR, (test_set_dir == forecast_VAR_dir).mean()
+
+def GNAR_model(Y, p, test_set, test_size, forecast_step):
+    # GNAR Edge Model
+
+    df_GNAR = np.asarray(Y.T.copy())
+    T, K = df_GNAR.shape
+    forecast_GNAR = np.zeros((test_size, K, forecast_step))
+
+    for i in range(test_size):
+        window_data = df_GNAR[i:, :]
+        # Build design Z: stack lagged blocks vertically -> shape (K*L, T-L)
+        Z_blocks = [window_data[p - l : T - l, :].T for l in range(1, p + 1)]  # each (K, T-L)
+        Z = np.vstack(Z_blocks)  # (K*L, T-L)
+
+        # Targets: X_{L+1: T} transposed -> shape (K, T-L)
+        X_target = window_data[p:, :].T  # (K, T-L)
+
+        # Closed-form OLS: B_hat = X_target @ Z.T @ (Z @ Z.T)^{-1}
+        ZZt = Z @ Z.T  # (K*L, K*L)
+
+        # Use pinv for numerical stability (works even if ZZt is near-singular)
+        ZZt_inv = np.linalg.pinv(ZZt)
+        B_hat = (X_target @ Z.T) @ ZZt_inv  # (K, K*L)
+
+        # state stack [X_t, X_{t-1},..., X_{t-L+1}]
+        state = np.concatenate([window_data[T - 1 - i] for i in range(p)], axis=0)  # (K*L,)
+        y_fc = np.zeros((forecast_step, K))
+        # Optional covariance recursion via companion form
+        for s in range(forecast_step):
+            x_next = (B_hat @ state)
+            y_fc[s] = x_next
+            # Update state: prepend forecast, drop oldest lag
+            state = np.hstack([x_next, state[:-K]])
+        forecast_GNAR[i, :, :] = y_fc.T
+        df_GNAR = np.append(df_GNAR, test_set[i, :, 0:1].T, axis=0)
+
+    with open(os.path.join('data\\LOBSTERdata\\output\\train\\aggregate', 'forecast_GNAR.npy'), 'wb') as f:
+        np.save(f, forecast_GNAR)
+
+    RMSE_GNAR = np.sqrt(np.mean((forecast_GNAR - test_set) ** 2))
+
+    last_ = np.append(np.array(Y.copy())[:, -1].reshape(-1, 1)[np.newaxis, :, :], test_set[:-1, :, 0:1], axis=0)
+    forecast_GNAR_dir = np.sign(np.diff(np.append(last_, forecast_GNAR, axis=2), axis=2))
+    test_set_dir = np.sign(np.diff(np.append(last_, test_set, axis=2), axis=2))
+
+    return forecast_GNAR, forecast_GNAR_dir, RMSE_GNAR, (test_set_dir == forecast_GNAR_dir).mean()
 
 def NA_model(Y, test_set, forecast_step):
     # Naive Model
