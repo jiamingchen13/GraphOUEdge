@@ -215,9 +215,11 @@ def estimate_grOU_drift(Y: np.ndarray, A: np.ndarray, W_C: List, R_L: List, C: i
                                               np.multiply(W_C[e], A[s])), integral))
                 idx_l += C * R_L[l] + d
             idx_k += C * R_L[k] + d
-
-        vec_theta_hat = np.matmul(np.linalg.pinv(KK), K)
-
+        try:
+            vec_theta_hat = np.matmul(np.linalg.pinv(KK), K)
+        except:
+            vec_theta_hat = np.full(p * d + sum(R_L) * C, np.inf)
+            
     if with_cov and Sigma is not None:
         return vec_theta_hat, KK, K
     elif with_cov and Sigma is None:
