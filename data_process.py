@@ -485,11 +485,11 @@ def model_pred_single(args):
     comp_row = np.zeros(6)
 
     start = time.perf_counter()
-    _, _, RMSE_row[0], direction_row[0] = UAR_model(sim_Y, sim_test_set, K, sim_test_size, forecast_step)
+    _, _, RMSE_row[0], direction_row[0] = UAR_model(sim_Y, sim_test_set, K, sim_test_size, forecast_step, 1)
     comp_row[0] = time.perf_counter() - start
 
     start = time.perf_counter()
-    _, _, RMSE_row[1], direction_row[1] = VAR_model(sim_Y, sim_test_set, K, sim_test_size, forecast_step)
+    _, _, RMSE_row[1], direction_row[1] = VAR_model(sim_Y, sim_test_set, K, sim_test_size, forecast_step, 1)
     comp_row[1] = time.perf_counter() - start
 
     start = time.perf_counter()
@@ -687,15 +687,16 @@ def UAR_model(Y, test_set, K, test_size, forecast_step, lag = None):
     # Univariate AR Edge Model
 
     df_AR = np.array(Y.copy())
-    aic_values = []
-    best_p = np.zeros((K,))
-    for i in range(K):
-        for p in range(1, 7):
-            model = AutoReg(df_AR[i, :], lags=p).fit()
-            aic_values.append((p, model.aic))
-        best_p[i] = min(aic_values, key=lambda x: x[1])[0]
-
     forecast_AR = np.zeros((test_size, K, forecast_step))
+    if lag is None:
+        aic_values = []
+        best_p = np.zeros((K,))
+        for i in range(K):
+            for p in range(1, 13):
+                model = AutoReg(df_AR[i, :], lags=p).fit()
+                aic_values.append((p, model.aic))
+            best_p[i] = min(aic_values, key=lambda x: x[1])[0]
+
     for i in range(test_size):
         for j in range(K):
             window_data = df_AR[j, i:]
@@ -717,19 +718,22 @@ def UAR_model(Y, test_set, K, test_size, forecast_step, lag = None):
 
     return forecast_AR, forecast_AR_dir, RMSE_AR, (test_set_dir == forecast_AR_dir).mean()
 
-def VAR_model(Y, test_set, K, test_size, forecast_step):
+def VAR_model(Y, test_set, K, test_size, forecast_step, lag = None):
     # VAR Edge Model
 
     df_VAR = np.array(Y.T.copy())
     model = VAR(df_VAR)
-
-    # Automatic lag selection by AIC
-    best_lag_var = model.select_order(maxlags=6).aic
-
     forecast_VAR = np.zeros((test_size, K, forecast_step))
+    if lag is None:
+        # Automatic lag selection by AIC
+        best_lag_var = model.select_order(maxlags=12).aic
+
     for i in range(test_size):
         window_data = df_VAR[i:, :]
-        model = VAR(window_data).fit(best_lag_var)
+        if lag is None:
+            model = VAR(window_data).fit(best_lag_var)
+        else:
+            model = VAR(window_data).fit(lag)
         forecast_VAR[i, :, :] = model.forecast(window_data[-model.k_ar:, :], steps=forecast_step).T
         df_VAR = np.append(df_VAR, test_set[i, :, 0:1].T, axis=0)
 
