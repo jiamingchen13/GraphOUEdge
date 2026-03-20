@@ -723,9 +723,9 @@ def estimate_MCAR(
     bs = [b_hat]
     Sigmas = [Sigma_hat]
     n_iter = 0
-    QQ_hat_new = np.zeros((p, d, d))
 
     while not converged:
+        QQ_hat_new = np.zeros((p, d, d))
         n_iter += 1
         if Model == 'OU':
             theta_hat_new = estimate_OU_drift(Y, R_L, C, P, Q, b_hat, gamma, with_cov=False, is_global=is_global) if QQ is None else QQ
@@ -745,14 +745,14 @@ def estimate_MCAR(
         b_hat = mu_hat - f_hat if b is None else b
 
         converged = np.sum([np.linalg.norm(QQ_hat_new[i] - QQ_hat[i]) for i in range(p)]) <= epsilon
-        QQ_hat = QQ_hat_new.copy()
+        QQ_hat = 0.5 * QQ_hat_new.copy() + 0.5 * QQ_hat
 
         if n_iter >= max_iter:
             converged = True
             warnings.warn('maximum number of iterations exceeded.')
 
         # Check if entering a loop
-        if any(np.array_equal(np.append(b_hat, [Sigma_hat, *QQ_hat]), np.append(b_, [Sigma_, *QQ_])) for b_, Sigma_, QQ_ in zip(bs, Sigmas, QQs)):
+        if any(states_close(b_hat, Sigma_hat, QQ_hat, b_, Sigma_, QQ_, tol=1e-6) for b_, Sigma_, QQ_ in zip(bs, Sigmas, QQs)):
             converged = True
             # Take average of loop values
             index = np.argmax(np.array([np.array_equal(np.append(b_hat, [Sigma_hat, *QQ_hat]), np.append(b_, [Sigma_, *QQ_])) for b_, Sigma_, QQ_ in zip(bs, Sigmas, QQs)]))
@@ -764,6 +764,12 @@ def estimate_MCAR(
             bs.append(b_hat)
             Sigmas.append(Sigma_hat)
     return QQ_hat, (b_hat, Sigma_hat)
+
+def states_close(b1, S1, Q1, b2, S2, Q2, tol=1e-6):
+    b_close = np.linalg.norm(b1 - b2) < tol
+    S_close = np.linalg.norm(S1 - S2, ord='fro') < tol
+    Q_close = sum(np.linalg.norm(Q1[i] - Q2[i], ord='fro') for i in range(len(Q1))) < tol
+    return b_close and S_close and Q_close
 
 def estimator_to_QQ(V: np.ndarray, R_L: List, C: int, W_C: List, Adj: np.ndarray, K: int) -> np.ndarray:
     """
