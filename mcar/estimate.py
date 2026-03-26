@@ -755,7 +755,7 @@ def estimate_MCAR(
         if any(states_close(b_hat, Sigma_hat, QQ_hat, b_, Sigma_, QQ_, tol=1e-6) for b_, Sigma_, QQ_ in zip(bs, Sigmas, QQs)):
             converged = True
             # Take average of loop values
-            index = np.argmax(np.array([np.array_equal(np.append(b_hat, [Sigma_hat, *QQ_hat]), np.append(b_, [Sigma_, *QQ_])) for b_, Sigma_, QQ_ in zip(bs, Sigmas, QQs)]))
+            index = np.argmax(np.array([states_close(b_hat, Sigma_hat, QQ_hat, b_, Sigma_, QQ_, tol=1e-6) for b_, Sigma_, QQ_ in zip(bs, Sigmas, QQs)]))
             QQ_hat = [np.mean(np.array(QQs)[index:, i, :, :], axis = 0) for i in range(p)]
             b_hat = np.mean(np.array(bs)[index:, :], axis = 0)
             Sigma_hat = np.mean(np.array(Sigmas)[index:, :, :], axis = 0)

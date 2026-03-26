@@ -579,7 +579,6 @@ def boxplot_(sim, scenario):
         ax[0].set_xticks(positions)
         ax[0].set_xticklabels(['UAR', 'VAR', 'GNAR', 'OU', 'MCAR', 'grOU', 'Baseline'])
         ax[0].set_ylabel('RMSE')
-        ax[0].set_title("Boxplot and Side Density for RMSE: " + label)
 
         positions = np.arange(1, 7)
         ax[1].boxplot(direction_acc, positions=positions, widths=0.3)
@@ -595,7 +594,6 @@ def boxplot_(sim, scenario):
         ax[1].set_xticks(positions)
         ax[1].set_xticklabels(['UAR', 'VAR', 'GNAR', 'OU', 'MCAR', 'grOU'])
         ax[1].set_ylabel('Directional accuracy')
-        ax[1].set_title("Boxplot and Side Density for directional accuracy: " + label)
 
         plt.show()
         fig.savefig('./data/LOBSTERdata/output/sim/' + scenario + '/boxplot_' + label + '.eps', bbox_inches='tight',
@@ -627,7 +625,6 @@ def boxplot_(sim, scenario):
         ax[0].set_xticks(positions)
         ax[0].set_xticklabels(['correct', 'missing_5', 'missing_1'])
         ax[0].set_ylabel('RMSE')
-        ax[0].set_title("Boxplot and Side Density for grOU RMSE")
 
     positions = np.arange(1, 4)
     ax[1].boxplot(grOU_direction_acc, positions=positions, widths=0.3)
@@ -643,7 +640,6 @@ def boxplot_(sim, scenario):
         ax[1].set_xticks(positions)
         ax[1].set_xticklabels(['correct', 'missing_5', 'missing_1'])
         ax[1].set_ylabel('Directional accuracy')
-        ax[1].set_title("Boxplot and Side Density for grOU directional accuracy")
 
     plt.show()
     fig.savefig('./data/LOBSTERdata/output/sim/' + scenario + '/boxplot_grOU.eps', bbox_inches='tight', format='eps')
@@ -962,7 +958,7 @@ def grOU_edge_model(Y, Adj, test_set, K, test_size, forecast_step, R_L, C, P_, Q
 
     for i in range(test_size):
         window_data = df_grOU[:, i:]
-        theta_hat, _, _ = estimate_grOU_drift(window_data, Adj_L, W_C, R_L, C, P_, Q_, b, gamma, None, Sigma, with_cov=True, is_global=is_global)
+        theta_hat, HH, H = estimate_grOU_drift(window_data, Adj_L, W_C, R_L, C, P_, Q_, b, gamma, None, Sigma, with_cov=True, is_global=is_global)
 
         # Fetch parameters
         idx = 0
@@ -1026,6 +1022,6 @@ def grOU_edge_model(Y, Adj, test_set, K, test_size, forecast_step, R_L, C, P_, Q
     test_set_dir = np.sign(np.diff(np.append(last_, test_set, axis=2), axis=2))
 
     if print_param:
-       return alphas, betas
+       return alphas, betas, theta_hat @ H - 0.5 * theta_hat @ HH @ theta_hat
     else:
        return forecast_grOU, forecast_grOU_dir, RMSE_grOU, 0.5 if (last_==forecast_grOU).all() else (test_set_dir == forecast_grOU_dir).mean()
