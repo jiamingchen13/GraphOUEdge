@@ -745,7 +745,7 @@ def estimate_MCAR(
         b_hat = mu_hat - f_hat if b is None else b
 
         converged = np.sum([np.linalg.norm(QQ_hat_new[i] - QQ_hat[i]) for i in range(p)]) <= epsilon
-        QQ_hat = 0.5 * QQ_hat_new.copy() + 0.5 * QQ_hat
+        QQ_hat = QQ_hat_new.copy()
 
         if n_iter >= max_iter:
             converged = True
