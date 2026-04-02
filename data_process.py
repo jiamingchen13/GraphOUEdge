@@ -473,9 +473,9 @@ def process_one_sim(arg):
     return result
 
 def model_pred_single(args):
-    index_, K, sim_Y, sim_test, adj_sim, forecast_step, P_Q_ratio, gamma = args
+    index_, sim_Y, sim_test, adj_sim, forecast_step, P_Q_ratio, gamma = args
 
-    sim_test_set = sliding_window_view(sim_test, (K, forecast_step))[0]
+    sim_test_set = sliding_window_view(sim_test, (sim_Y.shape[0], forecast_step))[0]
     sim_test_size = sim_test_set.shape[0]
     P_sim = np.array([i for i in range(sim_Y.shape[1])])
     Q_sim = np.append(P_sim[::P_Q_ratio], P_sim[-1]) if (sim_Y.shape[1] - 1) % P_Q_ratio != 0 else P_sim[::P_Q_ratio]
@@ -485,31 +485,36 @@ def model_pred_single(args):
     comp_row = np.zeros(6)
 
     start = time.perf_counter()
-    _, _, RMSE_row[0], direction_row[0] = UAR_model(sim_Y, sim_test_set, K, sim_test_size, forecast_step, 1)
+    forecast = UAR_model(sim_Y, sim_test_set, sim_test_size, forecast_step, 1)
     comp_row[0] = time.perf_counter() - start
+    RMSE_row[0], direction_row[0] = evaluate_forecast(sim_Y, forecast, sim_test_set)
 
     start = time.perf_counter()
-    _, _, RMSE_row[1], direction_row[1] = VAR_model(sim_Y, sim_test_set, K, sim_test_size, forecast_step, 1)
+    forecast = VAR_model(sim_Y, sim_test_set, sim_test_size, forecast_step, 1)
     comp_row[1] = time.perf_counter() - start
+    RMSE_row[1], direction_row[1] = evaluate_forecast(sim_Y, forecast, sim_test_set)
 
     start = time.perf_counter()
-    _, _, RMSE_row[2], direction_row[2] = GNAR_model(sim_Y, 1, K, sim_test_set, sim_test_size, forecast_step)
+    forecast = GNAR_model(sim_Y, adj_sim, [1], sim_test_set, sim_test_size, forecast_step)
     comp_row[2] = time.perf_counter() - start
+    RMSE_row[2], direction_row[2] = evaluate_forecast(sim_Y, forecast, sim_test_set)
 
     start = time.perf_counter()
-    _, _, RMSE_row[3], direction_row[3] = OU_edge_model(sim_Y, sim_test_set, K, sim_test_size, forecast_step, [1],
+    forecast = OU_edge_model(sim_Y, sim_test_set, sim_test_size, forecast_step, [1],
                                     1, P_sim, Q_sim, gamma, is_global=False)
     comp_row[3] = time.perf_counter() - start
+    RMSE_row[3], direction_row[3] = evaluate_forecast(sim_Y, forecast, sim_test_set)
 
     start = time.perf_counter()
-    _, _, RMSE_row[4], direction_row[4] = MCAR_edge_model(sim_Y, sim_test_set, K, sim_test_size, forecast_step, P_sim,
-                                            Q_sim, [1], 1, gamma)
+    forecast = MCAR_edge_model(sim_Y, sim_test_set, sim_test_size, forecast_step, P_sim, Q_sim, [1], 1, gamma)
     comp_row[4] = time.perf_counter() - start
+    RMSE_row[4], direction_row[4] = evaluate_forecast(sim_Y, forecast, sim_test_set)
 
     start = time.perf_counter()
-    _, _, RMSE_row[5], direction_row[5] = grOU_edge_model(sim_Y, adj_sim, sim_test_set, K, sim_test_size, forecast_step,
+    forecast = grOU_edge_model(sim_Y, adj_sim, sim_test_set, sim_test_size, forecast_step,
                                             [1], 1, P_sim, Q_sim, gamma, is_global=False)
     comp_row[5] = time.perf_counter() - start
+    RMSE_row[5], direction_row[5] = evaluate_forecast(sim_Y, forecast, sim_test_set)
 
     _, RMSE_row[6] = NA_model(sim_Y, sim_test_set, forecast_step)
 
@@ -526,7 +531,7 @@ def model_pred(data, test_size, adj_sim, forecast_step, P_Q_ratio, gamma, label,
     direction_acc = np.zeros((n, 6))
     comp_time = np.zeros((n, 6))
 
-    args_list = [(i, data.shape[1], data[i, :, :-test_size], data[i, :, -test_size:], adj_sim, forecast_step, P_Q_ratio,
+    args_list = [(i, data[i, :, :-test_size], data[i, :, -test_size:], adj_sim, forecast_step, P_Q_ratio,
                   gamma) for i in range(n)]
     with Pool(os.cpu_count()) as pool:
         for idx, rmse_row, dir_row, comp_row in pool.imap_unordered(model_pred_single, args_list):
@@ -561,8 +566,9 @@ def boxplot_(sim, scenario):
 
         with open('./data/LOBSTERdata/output/sim/' + scenario + '/time_' + label + '.npy', 'rb') as f:
             comp_time = np.load(f)
+            comp_time = comp_time[~np.isnan(comp_time).any(axis=1)]
 
-        fig, ax = plt.subplots(1, 2, figsize=(12, 6))
+        fig, ax = plt.subplots(1, 3, figsize=(18, 6))
 
         positions = np.arange(1, 8)
         ax[0].boxplot(RMSE[:, :], positions=positions, widths=0.3, showfliers=False)
@@ -594,6 +600,21 @@ def boxplot_(sim, scenario):
         ax[1].set_xticks(positions)
         ax[1].set_xticklabels(['UAR', 'VAR', 'GNAR', 'OU', 'MCAR', 'grOU'])
         ax[1].set_ylabel('Directional accuracy')
+
+        positions = np.arange(1, 7)
+        ax[2].boxplot(comp_time, positions=positions, widths=0.3)
+
+        for k in range(6):
+            kde = gaussian_kde(comp_time[:, k], bw_method=0.4)
+            x_vals = np.linspace(min(comp_time[:, k]), max(comp_time[:, k]), 100)
+            density = kde(x_vals)
+            density = density / density.max() * 0.25
+            # Shift density to the right of box
+            ax[2].plot(positions[k] + density, x_vals)
+
+        ax[2].set_xticks(positions)
+        ax[2].set_xticklabels(['UAR', 'VAR', 'GNAR', 'OU', 'MCAR', 'grOU'])
+        ax[2].set_ylabel('Computational Time')
 
         plt.show()
         fig.savefig('./data/LOBSTERdata/output/sim/' + scenario + '/boxplot_' + label + '.eps', bbox_inches='tight',
