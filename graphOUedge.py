@@ -1,4 +1,3 @@
-import os
 from multiprocessing import Pool, cpu_count
 from functools import partial
 from mcar.simulate import *
@@ -6,6 +5,7 @@ from mcar.estimate import *
 
 class GraphOUEdge:
     def __init__(self, R_L: List, K: int, C: int, Adj: np.ndarray, W_C: List, gamma: float, data_dir: str, scale: float = 1, T: int = 8):
+        np.random.seed(123)
         self.L = len(R_L)  # Lags
         self.R_L = R_L  # Maximum stage for each Lag
         self.K = K  # Edges

@@ -236,7 +236,7 @@ def aggregate_assets(assets, base_dir, out_dir, max_workers_days=None):
     log_price_path = out_dir + 'log_price.npz'
     np.savez(log_price_path, timestamps=log_price_data.index.astype('datetime64[s]'), **{col: log_price_data[col].values for col in log_price_data.columns})
 
-def MRC(Y, delta, theta, is_corr = True):
+def MRC(Y, delta, theta, is_corr=True):
     """
     Compute the Modulated Realized Correlation (MRC) estimator.
     """
@@ -279,7 +279,7 @@ def MRC(Y, delta, theta, is_corr = True):
 
     return pd.Series(data, index=labels)
 
-def log_data_to_corr_data(path: str, rule: str, delta = .6, theta = 1, is_corr = True):
+def log_data_to_corr_data(path: str, rule: str, delta=.6, theta=1, is_corr=True):
     # Load empirical data
     data = np.load(path + 'log_price.npz')
     index = pd.to_datetime(data["timestamps"])
@@ -493,7 +493,7 @@ def model_pred_single(args):
     comp_row[1] = time.perf_counter() - start
 
     start = time.perf_counter()
-    _, _, RMSE_row[2], direction_row[2] = GNAR_model(sim_Y, 1, sim_test_set, sim_test_size, forecast_step)
+    _, _, RMSE_row[2], direction_row[2] = GNAR_model(sim_Y, 1, K, sim_test_set, sim_test_size, forecast_step)
     comp_row[2] = time.perf_counter() - start
 
     start = time.perf_counter()
@@ -679,137 +679,226 @@ def dm_test(y, yhat1, yhat2, loss='rmse', h=1, q=None):
     pval = 2 * (1 - norm.cdf(np.abs(DM_hln)))
     return DM_hln, pval
 
-def UAR_model(Y, test_set, K, test_size, forecast_step, lag = None):
+def evaluate_forecast(Y, forecast, test_set):
+    rmse = np.sqrt(np.mean((forecast - test_set) ** 2))
+    last_ = np.append(np.array(Y.copy())[:, -1].reshape(-1, 1)[np.newaxis, :, :], test_set[:-1, :, 0:1], axis=0)
+    forecast_dir = np.sign(np.diff(np.append(last_, forecast, axis=2), axis=2))
+    test_dir = np.sign(np.diff(np.append(last_, test_set, axis=2), axis=2))
+    acc = 0.5 if (last_==forecast).all() else (test_dir == forecast_dir).mean()
+    return rmse, acc
+
+def UAR_model(Y, test_set, test_size, forecast_step, lag=None, save=False):
     # Univariate AR Edge Model
 
-    df_AR = np.array(Y.copy())
+    K, T_train = Y.shape
+    df_AR = np.empty((K, T_train + test_size))
+    df_AR[:, :T_train] = Y
+    df_AR[:, T_train:] = test_set[:, :, 0].T
     forecast_AR = np.zeros((test_size, K, forecast_step))
     if lag is None:
         aic_values = []
         best_p = np.zeros((K,))
         for i in range(K):
             for p in range(1, 13):
-                model = AutoReg(df_AR[i, :], lags=p).fit()
+                model = AutoReg(df_AR[i, :T_train], lags=p).fit()
                 aic_values.append((p, model.aic))
             best_p[i] = min(aic_values, key=lambda x: x[1])[0]
 
     for i in range(test_size):
         for j in range(K):
-            window_data = df_AR[j, i:]
+            window_data = df_AR[j, i:T_train + i]
             if lag is None:
                 model = AutoReg(window_data, lags=best_p[j]).fit()
+                forecast_AR[i, j, :] = model.predict(start=len(window_data), end=len(window_data) + forecast_step - 1)
             else:
-                model = AutoReg(window_data, lags=lag).fit()
-            forecast_AR[i, j, :] = model.predict(start=len(window_data), end=len(window_data) + forecast_step - 1)
-        df_AR = np.append(df_AR, test_set[i, :, 0:1], axis=1)
+                target = window_data[lag:]
+                X_lags = np.column_stack([window_data[lag - s:T_train - s] for s in range(1, lag + 1)])
+                X = np.column_stack([np.ones(T_train - lag), X_lags])
 
-    with open(os.path.join('data\\LOBSTERdata\\output\\train\\aggregate', 'forecast_AR.npy'), 'wb') as f:
-        np.save(f, forecast_AR)
+                beta, *_ = np.linalg.lstsq(X, target)
 
-    RMSE_AR = np.sqrt(np.mean((forecast_AR - test_set) ** 2))
+                # Recursive forecast using rolling lag buffer
+                recent = window_data[-lag:].copy()
+                preds = np.zeros(forecast_step)
 
-    last_ = np.append(np.array(Y.copy())[:, -1].reshape(-1, 1)[np.newaxis, :, :], test_set[:-1, :, 0:1], axis=0)
-    forecast_AR_dir = np.sign(np.diff(np.append(last_, forecast_AR, axis=2), axis=2))
-    test_set_dir = np.sign(np.diff(np.append(last_, test_set, axis=2), axis=2))
+                for s in range(forecast_step):
+                    x = np.empty(lag + 1)
+                    x[0] = 1.0
+                    x[1:] = recent[::-1]
 
-    return forecast_AR, forecast_AR_dir, RMSE_AR, (test_set_dir == forecast_AR_dir).mean()
+                    y_next = x @ beta
+                    preds[s] = y_next
 
-def VAR_model(Y, test_set, K, test_size, forecast_step, lag = None):
+                    if lag > 1:
+                        recent[:-1] = recent[1:]
+                    recent[-1] = y_next
+                forecast_AR[i, j, :] = preds
+    if save:
+        with open(os.path.join('data\\LOBSTERdata\\output\\train\\aggregate', 'forecast_AR.npy'), 'wb') as f:
+            np.save(f, forecast_AR)
+
+    return forecast_AR
+
+def VAR_model(Y, test_set, test_size, forecast_step, lag=None, save=False):
     # VAR Edge Model
 
-    df_VAR = np.array(Y.T.copy())
-    model = VAR(df_VAR)
+    K, T_train = Y.shape
+    df_VAR = np.empty((T_train + test_size, K))
+    df_VAR[:T_train, :] = Y.T
+    df_VAR[T_train:, :] = test_set[:, :, 0]
+    model = VAR(df_VAR[:T_train, :])
     forecast_VAR = np.zeros((test_size, K, forecast_step))
     if lag is None:
         # Automatic lag selection by AIC
         best_lag_var = model.select_order(maxlags=12).aic
 
     for i in range(test_size):
-        window_data = df_VAR[i:, :]
+        window_data = df_VAR[i:T_train + i, :]
         if lag is None:
             model = VAR(window_data).fit(best_lag_var)
+            forecast_VAR[i, :, :] = model.forecast(window_data[-model.k_ar:, :], steps=forecast_step).T
         else:
-            model = VAR(window_data).fit(lag)
-        forecast_VAR[i, :, :] = model.forecast(window_data[-model.k_ar:, :], steps=forecast_step).T
-        df_VAR = np.append(df_VAR, test_set[i, :, 0:1].T, axis=0)
+            target = window_data[lag:, :]  # shape (T_train-p, K)
+            X_lags = np.hstack([window_data[lag - s:T_train - s, :] for s in range(1, lag + 1)])
+            X = np.column_stack([np.ones(T_train - lag), X_lags])
 
-    with open(os.path.join('data\\LOBSTERdata\\output\\train\\aggregate', 'forecast_VAR.npy'), 'wb') as f:
-        np.save(f, forecast_VAR)
+            B, *_ = np.linalg.lstsq(X, target, rcond=None)
 
-    RMSE_VAR = np.sqrt(np.mean((forecast_VAR - test_set) ** 2))
+            recent = window_data[-lag:, :].copy()
+            preds = np.zeros((forecast_step, K))
 
-    last_ = np.append(np.array(Y.copy())[:, -1].reshape(-1, 1)[np.newaxis, :, :], test_set[:-1, :, 0:1], axis=0)
-    forecast_VAR_dir = np.sign(np.diff(np.append(last_, forecast_VAR, axis=2), axis=2))
-    test_set_dir = np.sign(np.diff(np.append(last_, test_set, axis=2), axis=2))
+            for s in range(forecast_step):
+                x = np.empty(1 + lag * K)
+                x[0] = 1.0
+                x[1:] = recent[::-1, :].reshape(-1)
 
-    return forecast_VAR, forecast_VAR_dir, RMSE_VAR, (test_set_dir == forecast_VAR_dir).mean()
+                y_next = x @ B
+                preds[s, :] = y_next
 
-def GNAR_model(Y, p, test_set, test_size, forecast_step):
+                if lag > 1:
+                    recent[:-1, :] = recent[1:, :]
+                recent[-1, :] = y_next
+            forecast_VAR[i, :, :] = preds.T
+    if save:
+        with open(os.path.join('data\\LOBSTERdata\\output\\train\\aggregate', 'forecast_VAR.npy'), 'wb') as f:
+            np.save(f, forecast_VAR)
+
+    return forecast_VAR
+
+def GNAR_model(Y, Adj, R_L, test_set, test_size, forecast_step, is_global = False, save=False):
     # GNAR Edge Model
 
-    df_GNAR = np.asarray(Y.T.copy())
-    T, K = df_GNAR.shape
+    p = len(R_L)
+    K, T_train = Y.shape
+
+    # Derive the adjacency matrix for edge graph
+    Adj_L = np.array(adjacency_matrices(Adj[0], max(R_L)))
+
+    # Compute the edge weight
+    W_C = edge_weight(Adj_L)
+
+    df_GNAR = np.empty((T_train + test_size, K))
+    df_GNAR[:T_train, :] = Y.T
+    df_GNAR[T_train:, :] = test_set[:, :, 0]
     forecast_GNAR = np.zeros((test_size, K, forecast_step))
 
+    n_rows = T_train - p
+    n_neigh = sum(R_L)
+
+    if is_global:
+        n_params = p + n_neigh
+    else:
+        n_params = p * K + n_neigh
+
     for i in range(test_size):
-        window_data = df_GNAR[i:, :]
-        # Build design Z: stack lagged blocks vertically -> shape (K*L, T-L)
-        Z_blocks = [window_data[p - l : T - l, :].T for l in range(1, p + 1)]  # each (K, T-L)
-        Z = np.vstack(Z_blocks)  # (K*L, T-L)
+        window_data = df_GNAR[i:Y.shape[1] + i, :]
 
-        # Targets: X_{L+1: T} transposed -> shape (K, T-L)
-        X_target = window_data[p:, :].T  # (K, T-L)
+        Y_target = window_data[p:]
+        Y_vec = Y_target.reshape(-1)
 
-        # Closed-form OLS: B_hat = X_target @ Z.T @ (Z @ Z.T)^{-1}
-        ZZt = Z @ Z.T  # (K*L, K*L)
+        # Preallocate design matrix
+        D = np.zeros((n_rows * K, n_params))
 
-        # Use pinv for numerical stability (works even if ZZt is near-singular)
-        ZZt_inv = np.linalg.pinv(ZZt)
-        B_hat = (X_target @ Z.T) @ ZZt_inv  # (K, K*L)
+        col_idx = 0
 
-        # state stack [X_t, X_{t-1},..., X_{t-L+1}]
-        state = np.concatenate([window_data[T - 1 - i] for i in range(p)], axis=0)  # (K*L,)
+        for j in range(1, p + 1):
+            x_lag = window_data[p - j:T_train - j, :]
+
+            if is_global:
+                # One shared own-lag coefficient per lag
+                # contributes K rows per time point, same coefficient column
+                D[:, col_idx] = x_lag.reshape(-1)
+                col_idx += 1
+            else:
+                # Node-specific own-lag coefficients
+                # For each node k, fill rows corresponding to node k
+                for k in range(K):
+                    D[k::K, col_idx + k] = x_lag[:, k]
+                col_idx += K
+
+            # Neighbor effects for this lag
+            for r in range(R_L[j - 1]):
+                wx = x_lag @ W_C[r].T
+                D[:, col_idx] = wx.reshape(-1)
+                col_idx += 1
+
+        theta = np.linalg.pinv(D) @ Y_vec
+
+        hist = window_data.copy()
         y_fc = np.zeros((forecast_step, K))
-        # Optional covariance recursion via companion form
+
         for s in range(forecast_step):
-            x_next = (B_hat @ state)
+            x_next = np.zeros(K)
+            idx = 0
+
+            for j in range(1, p + 1):
+                x_lag = hist[-j]
+
+                if is_global:
+                    alpha_j = theta[idx]
+                    idx += 1
+                    x_next += alpha_j * x_lag
+                else:
+                    alpha_j_vec = theta[idx:idx + K]
+                    idx += K
+                    x_next += alpha_j_vec * x_lag
+
+                for r in range(R_L[j - 1]):
+                    beta_jr = theta[idx]
+                    idx += 1
+                    x_next += beta_jr * (W_C[r] @ x_lag)
+
             y_fc[s] = x_next
-            # Update state: prepend forecast, drop oldest lag
-            state = np.hstack([x_next, state[:-K]])
+            hist = np.vstack([hist, x_next])
         forecast_GNAR[i, :, :] = y_fc.T
-        df_GNAR = np.append(df_GNAR, test_set[i, :, 0:1].T, axis=0)
+    if save:
+        with open(os.path.join('data\\LOBSTERdata\\output\\train\\aggregate', 'forecast_GNAR.npy'), 'wb') as f:
+            np.save(f, forecast_GNAR)
 
-    with open(os.path.join('data\\LOBSTERdata\\output\\train\\aggregate', 'forecast_GNAR.npy'), 'wb') as f:
-        np.save(f, forecast_GNAR)
-
-    RMSE_GNAR = np.sqrt(np.mean((forecast_GNAR - test_set) ** 2))
-
-    last_ = np.append(np.array(Y.copy())[:, -1].reshape(-1, 1)[np.newaxis, :, :], test_set[:-1, :, 0:1], axis=0)
-    forecast_GNAR_dir = np.sign(np.diff(np.append(last_, forecast_GNAR, axis=2), axis=2))
-    test_set_dir = np.sign(np.diff(np.append(last_, test_set, axis=2), axis=2))
-
-    return forecast_GNAR, forecast_GNAR_dir, RMSE_GNAR, (test_set_dir == forecast_GNAR_dir).mean()
+    return forecast_GNAR
 
 def NA_model(Y, test_set, forecast_step):
     # Naive Model
 
     forecast_NA = np.repeat(np.append(np.array(Y.copy())[:, -1].reshape(-1, 1)[np.newaxis, :, :], test_set[:-1, :, 0:1], axis=0), forecast_step, axis=2)
-
     RMSE_NA = np.sqrt(np.mean((forecast_NA - test_set) ** 2))
 
     return forecast_NA, RMSE_NA
 
-def MCAR_edge_model(Y, test_set, K, test_size, forecast_step, P_, Q_, R_L, C, gamma, method = 'naive'):
+def MCAR_edge_model(Y, test_set, test_size, forecast_step, P_, Q_, R_L, C, gamma, method='naive', save=False):
     # MCAR edge model
 
+    K, T_train = Y.shape
     forecast_MCAR = np.zeros((test_size, K, forecast_step))
     A = np.array([np.zeros((K, K)) for _ in range(max(R_L))])
     W_C = edge_weight(A)
-    df_MCAR = np.array(Y.copy())
+    df_MCAR = np.empty((K, T_train + test_size))
+    df_MCAR[:, :T_train] = Y
+    df_MCAR[:, T_train:] = test_set[:, :, 0].T
     _, (b_MCAR, Sigma_MCAR) = estimate_MCAR('MCAR', Y, P_, Q_, A, W_C, R_L, C, gamma)
 
     for i in range(test_size):
-        window_data = df_MCAR[:, i:]
+        window_data = df_MCAR[:, i:T_train + i]
         QQ_hat = estimate_MCAR_drift(Y, R_L, P_, Q_, b_MCAR, gamma, Sigma = Sigma_MCAR)
         Q_Q = MCAR_Q(QQ_hat)
 
@@ -846,27 +935,22 @@ def MCAR_edge_model(Y, test_set, K, test_size, forecast_step, P_, Q_, R_L, C, ga
 
         for n in range(forecast_step):
             X[:, n + 1] = eQt.dot(X[:, n]) + (eQt - np.eye(K * len(R_L))).dot(Q_inv).dot(E).dot(b_MCAR)
-
         forecast_MCAR[i, :, :] = np.array(X[:K, 1:])
-        df_MCAR = np.append(df_MCAR, test_set[i, :, 0:1], axis=1)
+    if save:
+        with open(os.path.join('data\\LOBSTERdata\\output\\train\\aggregate', f'forecast_MCAR_{len(R_L)}_{method}.npy'), 'wb') as f:
+            np.save(f, forecast_MCAR)
 
-    with open(os.path.join('data\\LOBSTERdata\\output\\train\\aggregate', f'forecast_MCAR_{len(R_L)}_{method}.npy'), 'wb') as f:
-        np.save(f, forecast_MCAR)
+    return forecast_MCAR
 
-    RMSE_MCAR = np.sqrt(np.mean((forecast_MCAR - test_set) ** 2))
-
-    last_ = np.append(np.array(Y.copy())[:, -1].reshape(-1, 1)[np.newaxis, :, :], test_set[:-1, :, 0:1], axis=0)
-    forecast_MCAR_dir = np.sign(np.diff(np.append(last_, forecast_MCAR, axis=2), axis=2))
-    test_set_dir = np.sign(np.diff(np.append(last_, test_set, axis=2), axis=2))
-
-    return forecast_MCAR, forecast_MCAR_dir, RMSE_MCAR, 0.5 if (last_==forecast_MCAR).all() else (test_set_dir == forecast_MCAR_dir).mean()
-
-def OU_edge_model(Y, test_set, K, test_size, forecast_step, R_L, C, P_, Q_, gamma, method = 'naive',
-                  is_global = False, print_param = False, is_test=False):
+def OU_edge_model(Y, test_set, test_size, forecast_step, R_L, C, P_, Q_, gamma, method = 'naive',
+                  is_global = False, print_param = False, is_test=False, save=False):
     # OU Edge model
 
+    K, T_train = Y.shape
     forecast_OU = np.zeros((test_size, K, forecast_step))
-    df_OU = np.array(Y.copy())
+    df_OU = np.empty((K, T_train + test_size))
+    df_OU[:, :T_train] = Y
+    df_OU[:, T_train:] = test_set[:, :, 0].T
     Adj_L_OU = np.array([np.zeros((K, K)) for _ in range(max(R_L))])
     W_C_OU = edge_weight(Adj_L_OU)
     X_OU = GraphOUEdge(R_L, K, C, Adj_L_OU, W_C_OU, gamma, 'data\\LOBSTERdata\\output\\train\\aggregate')
@@ -877,7 +961,7 @@ def OU_edge_model(Y, test_set, K, test_size, forecast_step, R_L, C, P_, Q_, gamm
         test_size = 1
 
     for i in range(test_size):
-        window_data = df_OU[:, i:]
+        window_data = df_OU[:, i:T_train + i]
         theta_hat_OU, _, _ = estimate_OU_drift(window_data, R_L, C, P_, Q_, b_OU, gamma, None, Sigma_OU, with_cov=True, is_global=is_global)
         X_OU.alpha_set(theta_hat_OU)
         X_OU.beta_set([[0] * stage * C for stage in R_L])
@@ -918,28 +1002,21 @@ def OU_edge_model(Y, test_set, K, test_size, forecast_step, R_L, C, P_, Q_, gamm
 
         for n in range(forecast_step):
             X[:, n + 1] = eQt.dot(X[:, n]) + (eQt - np.eye(K * len(R_L))).dot(Q_inv).dot(E).dot(b_OU)
-
         forecast_OU[i, :, :] = np.array(X[:K, 1:])
-        df_OU = np.append(df_OU, test_set[i, :, 0:1], axis=1)
-
-    with open(os.path.join('data\\LOBSTERdata\\output\\train\\aggregate', f'forecast_OU_{len(R_L)}_{method}_global_{is_global}.npy'), 'wb') as f:
-        np.save(f, forecast_OU)
-
-    RMSE_OU = np.sqrt(np.mean((forecast_OU - test_set) ** 2))
-
-    last_ = np.append(np.array(Y.copy())[:, -1].reshape(-1, 1)[np.newaxis, :, :], test_set[:-1, :, 0:1], axis=0)
-    forecast_OU_dir = np.sign(np.diff(np.append(last_, forecast_OU, axis=2), axis=2))
-    test_set_dir = np.sign(np.diff(np.append(last_, test_set, axis=2), axis=2))
+    if save:
+        with open(os.path.join('data\\LOBSTERdata\\output\\train\\aggregate', f'forecast_OU_{len(R_L)}_{method}_global_{is_global}.npy'), 'wb') as f:
+            np.save(f, forecast_OU)
 
     if print_param:
         return np.array(alphas_OU)
     else:
-        return forecast_OU, forecast_OU_dir, RMSE_OU, 0.5 if (last_==forecast_OU).all() else (test_set_dir == forecast_OU_dir).mean()
+        return forecast_OU
 
-def grOU_edge_model(Y, Adj, test_set, K, test_size, forecast_step, R_L, C, P_, Q_, gamma, method = 'naive',
-                    is_global=False, print_param=False, is_test=False):
+def grOU_edge_model(Y, Adj, test_set, test_size, forecast_step, R_L, C, P_, Q_, gamma, method = 'naive',
+                    is_global=False, print_param=False, is_test=False, save=False):
     # graph OU Edge model
 
+    K, T_train = Y.shape
     # Derive the adjacency matrix for edge graph
     Adj_L = np.array(adjacency_matrices(Adj[0], max(R_L)))
 
@@ -949,7 +1026,9 @@ def grOU_edge_model(Y, Adj, test_set, K, test_size, forecast_step, R_L, C, P_, Q
     X = GraphOUEdge(R_L, K, C, Adj_L, W_C, gamma, 'data\\LOBSTERdata\\output\\train\\aggregate')
     _, (b, Sigma) = estimate_MCAR('grOU', Y, P_, Q_, Adj_L, W_C, R_L, C, gamma, is_global=is_global)
     forecast_grOU = np.zeros((test_size, K, forecast_step))
-    df_grOU = np.array(Y.copy())
+    df_grOU = np.empty((K, T_train + test_size))
+    df_grOU[:, :T_train] = Y
+    df_grOU[:, T_train:] = test_set[:, :, 0].T
     alphas = []
     betas = []
 
@@ -957,8 +1036,8 @@ def grOU_edge_model(Y, Adj, test_set, K, test_size, forecast_step, R_L, C, P_, Q
         test_size = 1
 
     for i in range(test_size):
-        window_data = df_grOU[:, i:]
-        theta_hat, HH, H = estimate_grOU_drift(window_data, Adj_L, W_C, R_L, C, P_, Q_, b, gamma, None, Sigma, with_cov=True, is_global=is_global)
+        window_data = df_grOU[:, i:T_train + i]
+        theta_hat, _, _ = estimate_grOU_drift(window_data, Adj_L, W_C, R_L, C, P_, Q_, b, gamma, None, Sigma, with_cov=True, is_global=is_global)
 
         # Fetch parameters
         idx = 0
@@ -971,8 +1050,9 @@ def grOU_edge_model(Y, Adj, test_set, K, test_size, forecast_step, R_L, C, P_, Q
         X.alpha_set(np.array(alpha_pred))
         X.beta_set(beta_pred)
         Q_Q = X.Q_matrix(False)
-        alphas.append(alpha_pred)
-        betas.append(beta_pred)
+        if print_param:
+            alphas.append(alpha_pred)
+            betas.append(beta_pred)
 
         if len(R_L) == 1:
             x0 = window_data[:, -1]
@@ -1008,20 +1088,12 @@ def grOU_edge_model(Y, Adj, test_set, K, test_size, forecast_step, R_L, C, P_, Q
 
         for n in range(forecast_step):
             X_[:, n + 1] = eQt.dot(X_[:, n]) + (eQt - np.eye(K * len(R_L))).dot(Q_inv).dot(E).dot(b)
-
         forecast_grOU[i, :, :] = np.array(X_[:K, 1:])
-        df_grOU = np.append(df_grOU, test_set[i, :, 0:1], axis=1)
-
-    with open(os.path.join('data\\LOBSTERdata\\output\\train\\aggregate', f'forecast_grOU_{len(R_L)}_{R_L}_{method}_global_{is_global}.npy'), 'wb') as f:
-        np.save(f, forecast_grOU)
-
-    RMSE_grOU = np.sqrt(np.mean((forecast_grOU - test_set) ** 2))
-
-    last_ = np.append(np.array(Y.copy())[:, -1].reshape(-1, 1)[np.newaxis, :, :], test_set[:-1, :, 0:1], axis=0)
-    forecast_grOU_dir = np.sign(np.diff(np.append(last_, forecast_grOU, axis=2), axis=2))
-    test_set_dir = np.sign(np.diff(np.append(last_, test_set, axis=2), axis=2))
+    if save:
+        with open(os.path.join('data\\LOBSTERdata\\output\\train\\aggregate', f'forecast_grOU_{len(R_L)}_{R_L}_{method}_global_{is_global}.npy'), 'wb') as f:
+            np.save(f, forecast_grOU)
 
     if print_param:
-       return alphas, betas, theta_hat @ H - 0.5 * theta_hat @ HH @ theta_hat
+       return alphas, betas
     else:
-       return forecast_grOU, forecast_grOU_dir, RMSE_grOU, 0.5 if (last_==forecast_grOU).all() else (test_set_dir == forecast_grOU_dir).mean()
+       return forecast_grOU
