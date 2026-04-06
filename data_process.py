@@ -591,7 +591,8 @@ def boxplot_(sim, scenario):
 
         for k in range(6):
             kde = gaussian_kde(direction_acc[:, k], bw_method=0.4)
-            x_vals = np.linspace(min(direction_acc[:, k]), max(direction_acc[:, k]), 100)
+            low, high = np.percentile(direction_acc[:, k], [5, 95])
+            x_vals = np.linspace(low, high, 100)
             density = kde(x_vals)
             density = density / density.max() * 0.25
             # Shift density to the right of box
@@ -604,13 +605,14 @@ def boxplot_(sim, scenario):
         positions = np.arange(1, 7)
         ax[2].boxplot(comp_time, positions=positions, widths=0.3)
 
-        for k in range(6):
-            kde = gaussian_kde(comp_time[:, k], bw_method=0.4)
-            x_vals = np.linspace(min(comp_time[:, k]), max(comp_time[:, k]), 100)
+        for l in range(6):
+            kde = gaussian_kde(comp_time[:, l], bw_method=0.4)
+            low, high = np.percentile(comp_time[:, l], [5, 95])
+            x_vals = np.linspace(low, high, 100)
             density = kde(x_vals)
             density = density / density.max() * 0.25
             # Shift density to the right of box
-            ax[2].plot(positions[k] + density, x_vals)
+            ax[2].plot(positions[l] + density, x_vals)
 
         ax[2].set_xticks(positions)
         ax[2].set_xticklabels(['UAR', 'VAR', 'GNAR', 'OU', 'MCAR', 'grOU'])
@@ -636,7 +638,7 @@ def boxplot_(sim, scenario):
 
     for i in range(3):
         kde = gaussian_kde(grOU_RMSE[:, i], bw_method=0.4)
-        low, high = np.percentile(grOU_RMSE[:, i], [1, 99])
+        low, high = np.percentile(grOU_RMSE[:, i], [5, 95])
         x_vals = np.linspace(low, high, 100)
         density = kde(x_vals)
         density = density / density.max() * 0.25
@@ -652,7 +654,8 @@ def boxplot_(sim, scenario):
 
     for i in range(3):
         kde = gaussian_kde(grOU_direction_acc[:, i], bw_method=0.4)
-        x_vals = np.linspace(min(grOU_direction_acc[:, i]), max(grOU_direction_acc[:, i]), 100)
+        low, high = np.percentile(grOU_direction_acc[:, i], [5, 95])
+        x_vals = np.linspace(low, high, 100)
         density = kde(x_vals)
         density = density / density.max() * 0.25
         # Shift density to the right of box

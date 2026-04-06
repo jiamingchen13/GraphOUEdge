@@ -80,7 +80,7 @@ class GraphOUEdge:
             n_jobs = cpu_count()
         args_list = [(regime, i, rate, seed + i) for i in range(n_samples)]
         with Pool(processes = n_jobs) as pool:
-            for sample_idx, path in pool.imap_unordered(self._simulate_one, args_list, chunksize=10):
+            for sample_idx, path in pool.imap(self._simulate_one, args_list, chunksize=10):
                 MCAR[sample_idx, :, :] = path
 
         return MCAR
