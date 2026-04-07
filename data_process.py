@@ -625,7 +625,7 @@ def boxplot_(sim, scenario):
         df = pd.DataFrame(
             [np.mean(RMSE, axis=0), np.std(RMSE, axis=0), np.mean(direction_acc, axis=0), np.std(direction_acc, axis=0),
              np.mean(comp_time, axis=0), np.std(comp_time, axis=0)],
-            columns=['UAR', 'VAR', 'GNAR', 'OU', 'MCAR', 'grOU', 'Baseline'],
+            columns=['UAR', 'VAR', 'GNAR', 'OU', 'MCAR', 'grOU', 'NA'],
             index=['RMSE_mean', 'RMSE_std', 'Directional_accuracy_mean', 'Directional_accuracy_std',
                    'Computational_time_mean', 'Computational_time_std'])
         print(label)
