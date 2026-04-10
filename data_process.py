@@ -1061,7 +1061,7 @@ def grOU_edge_model(Y, Adj, test_set, test_size, forecast_step, R_L, C, P_, Q_, 
 
     for i in range(test_size):
         window_data = df_grOU[:, i:T_train + i]
-        theta_hat, _, _ = estimate_grOU_drift(window_data, Adj_L, W_C, R_L, C, P_, Q_, b, gamma, None, Sigma, with_cov=True, is_global=is_global)
+        theta_hat, KK, _ = estimate_grOU_drift(window_data, Adj_L, W_C, R_L, C, P_, Q_, b, gamma, None, Sigma, with_cov=True, is_global=is_global)
 
         # Fetch parameters
         idx = 0
@@ -1118,6 +1118,6 @@ def grOU_edge_model(Y, Adj, test_set, test_size, forecast_step, R_L, C, P_, Q_, 
             np.save(f, forecast_grOU)
 
     if print_param:
-       return alphas, betas
+       return alphas, betas, -theta_hat.T @ KK @ theta_hat + (len(R_L) * K + sum(R_L)) * np.log(len(Q_))
     else:
        return forecast_grOU
