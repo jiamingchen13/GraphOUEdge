@@ -421,17 +421,14 @@ def kalman_filter_mcar_BM(Y, Q_QQ, Sigma, P_, Q_, QQ_hat, gamma):
     return m_filtered[-1]
 
 def worker(arg):
-    delta, forecast_step, gamma = arg
-    # Load the correlation/covariance data
-    data = np.load('./data/LOBSTERdata/output/train/aggregate/cov.npz', allow_pickle=True)
-    index = pd.to_datetime(data['timestamps'])
-    _data = pd.DataFrame({key: data[key] for key in data.files if key != 'timestamps'}, index=index)
+    _data, test_data_, TICKERS, R_L, P_, Q_, forecast_step, C, gamma, i = arg
 
+    np.random.seed(i)
     A = np.triu(np.random.randint(0, 2, (8, 8)), 1)
     A += A.T
 
     # Derive network structure
-    Adj = adj_to_line_graph(A, ['SPY', 'AMZN', 'JPM', 'GS', 'KO', 'MSFT', 'NDAQ', 'MNST'])
+    Adj = adj_to_line_graph(A, TICKERS)
 
     # Number of edges
     K = Adj[0].shape[0]
@@ -439,21 +436,16 @@ def worker(arg):
     # Training data
     Y = _data[Adj[1]].T
 
-    # Set time grids
-    P_ = np.array([i for i in range(Y.shape[1])])
-    Q_ = np.append(P_[::delta], P_[-1]) if (Y.shape[1] - 1) % delta != 0 else P_[::delta]
-
     # Testing data
-    test_data = np.load('./data/LOBSTERdata/output/test/aggregate/cov.npz', allow_pickle=True)
-    test_index = pd.to_datetime(test_data['timestamps'])
-    test_data_ = pd.DataFrame({key: test_data[key] for key in test_data.files if key != 'timestamps'}, index=test_index)
     test_Y = test_data_[Adj[1]].T
     test_set = sliding_window_view(test_Y, (K, forecast_step))[0]
     test_size = test_set.shape[0]
 
-    _, _, RMSE_UAR, direction_acc_UAR = UAR_model(Y, test_set, K, test_size, forecast_step)
-    _, _, RMSE_grOU, direction_acc_grOU =  grOU_edge_model(Y, Adj, test_set, K, test_size, forecast_step, [1], 1, P_, Q_, gamma, is_global=False)
-    return direction_acc_grOU - direction_acc_UAR, A, (RMSE_grOU-RMSE_UAR)/RMSE_UAR
+    forecast_AR = UAR_model(Y, test_set, test_size, forecast_step, lag=len(R_L))
+    _, direction_acc_AR = evaluate_forecast(Y, forecast_AR, test_set)
+    forecast_grOU =  grOU_edge_model(Y, Adj, test_set, test_size, forecast_step, R_L, C, P_, Q_, gamma)
+    _, direction_acc_grOU = evaluate_forecast(Y, forecast_grOU, test_set)
+    return direction_acc_grOU - direction_acc_AR, A, (direction_acc_grOU - direction_acc_AR)/direction_acc_AR
 
 def process_one_sim(arg):
     P, R_L, K, C, Y, adj_L_sim, W_C_sim, gamma = arg
@@ -1107,7 +1099,11 @@ def grOU_edge_model(Y, Adj, test_set, test_size, forecast_step, R_L, C, P_, Q_, 
 
         # Precompute for speed-up
         eQ = scipy.linalg.expm(Q_Q)
-        Q_inv = np.linalg.pinv(Q_Q)
+        try:
+            Q_inv = np.linalg.pinv(Q_Q)
+        except:
+            Q_Q = Q_Q + 1e-8 * np.eye(Q_Q.shape[0])
+            Q_inv = np.linalg.pinv(Q_Q)
         eQt = scipy.linalg.fractional_matrix_power(eQ, P_[1] - P_[0]).real
 
         for n in range(forecast_step):
@@ -1121,3 +1117,145 @@ def grOU_edge_model(Y, Adj, test_set, test_size, forecast_step, R_L, C, P_, Q_, 
        return alphas, betas, -theta_hat.T @ KK @ theta_hat + (len(R_L) * K + sum(R_L)) * np.log(len(Q_))
     else:
        return forecast_grOU
+
+def is_better(candidate, incumbent, tol=1e-4):
+    """
+    Compare two results of form:
+    [rate_abs_diff, A, rate_rel_diff]
+    """
+    if incumbent is None:
+        return True
+
+    cand_abs, _, cand_rel = candidate
+    inc_abs, _, inc_rel = incumbent
+
+    if cand_abs > inc_abs + tol:
+        return True
+    elif abs(cand_abs - inc_abs) <= tol and cand_rel > inc_rel:
+        return True
+    return False
+
+def find_best_network(_data, test_data_, TICKERS, RL, P_, Q_, forecast_step, C, gamma, n_candidates=100, tol=1e-4):
+    """
+    Search candidate networks and return the best one under a fixed RL.
+    """
+    best_result = None
+
+    arg_list = [(_data, test_data_, TICKERS, RL, P_, Q_, forecast_step, C, gamma, i) for i in range(n_candidates)]
+
+    with Pool(os.cpu_count()) as pool:
+        for candidate in pool.imap_unordered(worker, arg_list):
+            candidate = list(candidate)
+            if is_better(candidate, best_result, tol=tol):
+                best_result = candidate
+
+    return best_result
+
+def select_best_model_for_network(_data, test_data_, TICKERS, A, P_, Q_, forecast_step, C, gamma, max_order=5):
+    """
+    Given a network A, select the best RL via BIC.
+    """
+    Adj = adj_to_line_graph(A, TICKERS)
+    K = Adj[0].shape[0]
+
+    # Training data
+    Y = _data[Adj[1]].T
+
+    # Testing data
+    test_Y = test_data_[Adj[1]].T
+    test_set = sliding_window_view(test_Y, (K, forecast_step))[0]
+    test_size = test_set.shape[0]
+
+    models = [[value] * length for length in range(1, max_order + 1) for value in (1, 2)]
+
+    bic = [grOU_edge_model(Y, Adj, test_set, test_size, forecast_step, model, C, P_, Q_, gamma, is_global=False, print_param=True, is_test=True)[2] for model in models]
+
+    best_idx = min(range(len(bic)), key=bic.__getitem__)
+    best_model = models[best_idx]
+    best_bic = bic[best_idx]
+
+    return best_model, best_bic, Adj
+
+def iterative_grou_search_with_rollback(_data, test_data_, TICKERS, start_RL, P_, Q_, forecast_step, C, gamma, n_candidates=100, max_order=5, max_iter=20, tol=1e-4):
+    """
+    Iterative search:
+    - search best network for current RL
+    - use BIC to propose new RL
+    - accept new RL only if it improves out-of-sample performance
+    - otherwise revert to previous RL and stop
+    """
+    current_RL = start_RL.copy()
+
+    # Baseline result under starting RL
+    current_result = find_best_network(_data, test_data_, TICKERS, current_RL, P_, Q_, forecast_step, C, gamma, n_candidates=n_candidates, tol=tol)
+    current_A = current_result[1]
+
+    history = [{
+        "iteration": 0,
+        "RL": current_RL.copy(),
+        "result": current_result,
+        "accepted": True,
+        "note": "initial model"
+    }]
+
+    print(f"Initial RL: {current_RL}")
+    print(f"Initial best result: {current_result}")
+
+    for iteration in range(1, max_iter + 1):
+        print(f"\n===== Iteration {iteration} =====")
+        print(f"Current RL: {current_RL}")
+
+        # Step 4: BIC proposes a new RL using current best network
+        proposed_RL, best_bic, Adj = select_best_model_for_network(_data, test_data_, TICKERS, current_A, P_, Q_, forecast_step, C, gamma, max_order=max_order)
+
+        print(f"BIC proposed RL: {proposed_RL}, BIC={best_bic}")
+
+        # If BIC gives the same RL, stop
+        if proposed_RL == current_RL:
+            print("Stop: BIC selected the same RL.")
+            history.append({
+                "iteration": iteration,
+                "RL": current_RL.copy(),
+                "result": current_result,
+                "accepted": False,
+                "note": "BIC selected same RL; stop"
+            })
+            break
+
+        # Evaluate the proposed RL by re-running network search
+        proposed_result = find_best_network(_data, test_data_, TICKERS, proposed_RL, P_, Q_, forecast_step, C, gamma, n_candidates=n_candidates, tol=tol)
+
+        print(f"Proposed RL result: {proposed_result}")
+        print(f"Current RL result:  {current_result}")
+
+        # Accept only if proposed RL improves performance
+        if is_better(proposed_result, current_result, tol=tol):
+            print("Accept new RL: out-of-sample performance improved.")
+            current_RL = proposed_RL
+            current_result = proposed_result
+            current_A = proposed_result[1]
+
+            history.append({
+                "iteration": iteration,
+                "RL": current_RL.copy(),
+                "result": current_result,
+                "accepted": True,
+                "note": "accepted BIC-proposed RL"
+            })
+        else:
+            print("Reject new RL: no improvement. Revert to previous RL and stop.")
+            history.append({
+                "iteration": iteration,
+                "RL": proposed_RL.copy() if isinstance(proposed_RL, list) else proposed_RL,
+                "result": proposed_result,
+                "accepted": False,
+                "note": "rejected; reverted to previous RL"
+            })
+            break
+
+    return {
+        "final_RL": current_RL,
+        "final_network": current_A,
+        "final_result": current_result,
+        "history": history,
+    }
