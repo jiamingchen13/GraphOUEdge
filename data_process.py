@@ -696,7 +696,7 @@ def UAR_model(Y, test_set, test_size, forecast_step, lag=None, save=False):
                 X_lags = np.column_stack([window_data[lag - s:T_train - s] for s in range(1, lag + 1)])
                 X = np.column_stack([np.ones(T_train - lag), X_lags])
 
-                beta= np.linalg.pinv(X) @ target
+                beta = np.linalg.lstsq(X, target, rcond=None)[0]
 
                 # Recursive forecast using rolling lag buffer
                 recent = window_data[-lag:].copy()
@@ -743,7 +743,7 @@ def VAR_model(Y, test_set, test_size, forecast_step, lag=None, save=False):
             X_lags = np.hstack([window_data[lag - s:T_train - s, :] for s in range(1, lag + 1)])
             X = np.column_stack([np.ones(T_train - lag), X_lags])
 
-            B = np.linalg.pinv(X) @ target
+            B = np.linalg.lstsq(X, target, rcond=None)[0]
 
             recent = window_data[-lag:, :].copy()
             preds = np.zeros((forecast_step, K))
@@ -823,7 +823,7 @@ def GNAR_model(Y, Adj, R_L, test_set, test_size, forecast_step, is_global = Fals
                 D[:, col_idx] = wx.reshape(-1)
                 col_idx += 1
 
-        theta = np.linalg.pinv(D) @ Y_vec
+        theta = np.linalg.lstsq(D, Y_vec, rcond=None)[0]
 
         hist = window_data.copy()
         y_fc = np.zeros((forecast_step, K))
@@ -911,7 +911,10 @@ def MCAR_edge_model(Y, test_set, test_size, forecast_step, P_, Q_, R_L, C, gamma
 
         # Precompute for speed-up
         eQ = scipy.linalg.expm(Q_Q)
-        Q_inv = Q_QQ_inverse(Q_Q, K)
+        try:
+            Q_inv = Q_QQ_inverse(Q_Q, K)
+        except:
+            Q_inv = np.linalg.pinv(Q_Q)
         eQt = scipy.linalg.fractional_matrix_power(eQ, P_[1] - P_[0]).real
 
         for n in range(forecast_step):
@@ -978,7 +981,10 @@ def OU_edge_model(Y, test_set, test_size, forecast_step, R_L, C, P_, Q_, gamma, 
 
         # Precompute for speed-up
         eQ = scipy.linalg.expm(Q_Q)
-        Q_inv = Q_QQ_inverse(Q_Q, K)
+        try:
+            Q_inv = Q_QQ_inverse(Q_Q, K)
+        except:
+            Q_inv = np.linalg.pinv(Q_Q)
         eQt = scipy.linalg.fractional_matrix_power(eQ, P_[1] - P_[0]).real
 
         for n in range(forecast_step):
@@ -1064,7 +1070,10 @@ def grOU_edge_model(Y, Adj, test_set, test_size, forecast_step, R_L, C, P_, Q_, 
 
         # Precompute for speed-up
         eQ = scipy.linalg.expm(Q_Q)
-        Q_inv = Q_QQ_inverse(Q_Q, K)
+        try:
+            Q_inv = Q_QQ_inverse(Q_Q, K)
+        except:
+            Q_inv = np.linalg.pinv(Q_Q)
         eQt = scipy.linalg.fractional_matrix_power(eQ, P_[1] - P_[0]).real
 
         for n in range(forecast_step):
