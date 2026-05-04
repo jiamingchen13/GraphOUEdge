@@ -31,6 +31,35 @@ def MCAR_Q(QQ: np.ndarray) -> np.ndarray:
         Q_QQ[-d:, i * d:(i + 1) * d] = - QQ[p - i - 1]
     return Q_QQ
 
+def Q_QQ_inverse(Q_QQ: np.ndarray, K: int) -> np.ndarray:
+    """
+    Compute the inverse MCAR structural matrix from Proposition 2.1.
+    :param Q_QQ: MCAR structural matrix, (pd, pd) np.ndarray
+    :param K: Number of edges
+    :return Q_QQ_inverse
+    [-Q_p^{-1}Q_{p-1}, ..., -Q_p^{-1}Q_{1}, -Q_p^{-1}
+     I 0... 0
+     0 I... 0
+     0 ...I 0]
+    """
+    p = Q_QQ.shape[0] // K
+    last_row_blocks = [Q_QQ[(p - 1) * K:p * K, j * K:(j + 1) * K] for j in range(p)]
+
+    # Build inverse
+    Q_inv = np.zeros_like(Q_QQ)
+
+    # First block row:
+    # [-Q_p^{-1}Q_{p-1}, ..., -Q_p^{-1}Q_{1}, -Q_p^{-1}]
+    for j in range(p - 1):
+        Q_inv[0:K, j * K:(j + 1) * K] = -np.linalg.solve(last_row_blocks[0], last_row_blocks[j + 1])
+    Q_inv[0:K, (p - 1) * K:p * K] = np.linalg.solve(last_row_blocks[0], np.eye(K))
+
+    # Lower block rows: identity blocks on first subdiagonal
+    for i in range(1, p):
+        Q_inv[i * K:(i + 1) * K, (i - 1) * K:i * K] = np.eye(K)
+
+    return Q_inv
+
 def simulate_MCAR_stat_distr_approx(Q_QQ: np.ndarray, a: np.ndarray, Sigma: np.ndarray, jumps: Optional[Callable[[float, float], np.ndarray]]):
     """
     Simulate from stationary distribution of MCAR process by approximating integral discretely.
@@ -48,13 +77,13 @@ def simulate_MCAR_stat_distr_approx(Q_QQ: np.ndarray, a: np.ndarray, Sigma: np.n
     # approximate integral, choose T depending on |Q_QQ| (depending on how fast e^Q_QQs decays)
     T = - np.log(1e-8) / np.linalg.norm(Q_QQ)
     N = 1000
-    P = np.linspace(0, T, N+1)
+    P = np.linspace(0, T, N + 1)
     delta_t = T/N
     if jumps is None:
         delta_jump_L = np.zeros([d, N])
     else:
         delta_jump_L = jumps(delta_t, N)
-    delta_L = scipy.stats.multivariate_normal(mean=a*delta_t, cov=Sigma*delta_t).rvs(size=N).T + delta_jump_L
+    delta_L = scipy.stats.multivariate_normal(mean=a * delta_t, cov=Sigma * delta_t).rvs(size=N).T + delta_jump_L
     return np.tensordot(scipy.linalg.expm(np.tensordot(P[:-1], Q_QQ, axes=0)), np.matmul(E, delta_L), axes=[[0, 2], [1, 0]])
 
 def simulate_MCAR_stat_distr_compound_poisson(Q_QQ: np.ndarray, a: np.ndarray, Sigma: np.ndarray, rate: float, jump_F: Optional[scipy.stats._multivariate.multi_rv_frozen]):
@@ -87,7 +116,7 @@ def simulate_MCAR_stat_distr_compound_poisson(Q_QQ: np.ndarray, a: np.ndarray, S
     V = scipy.linalg.expm(M * T)[:pd, pd:].dot(scipy.linalg.expm(Q_QQ * T).T)
 
     # Stationary drift component
-    Q_inv = np.linalg.pinv(Q_QQ)
+    Q_inv = Q_QQ_inverse(Q_QQ, d)
     a_component = -Q_inv.dot(E).dot(a)
 
     # Brownian component
@@ -233,7 +262,7 @@ def simulate_MCAR_compound_poisson(P: np.ndarray, Q_QQ: np.ndarray, x0: np.ndarr
     eM = scipy.linalg.expm(M)
 
     eQ = scipy.linalg.expm(Q_QQ)
-    Q_inv = np.linalg.pinv(Q_QQ)
+    Q_inv = Q_QQ_inverse(Q_QQ, d)
     
     if uniform:
         delta_t = P[1] - P[0]
@@ -329,5 +358,5 @@ def gamma_increments(delta_t: float, n: int, d: int, shape: float, scale: float 
     :param d: dimension of process, int
     :return increments: the increments of the process, (d, n) np.ndarray
     """
-    increments = (scipy.stats.gamma.rvs(a=shape*delta_t, scale=scale, size=d*n) - scipy.stats.gamma.rvs(a=shape*delta_t, scale=scale, size=d*n)).reshape((d, -1))
+    increments = (scipy.stats.gamma.rvs(a=shape * delta_t, scale=scale, size=d * n) - scipy.stats.gamma.rvs(a=shape * delta_t, scale=scale, size=d * n)).reshape((d, -1))
     return increments

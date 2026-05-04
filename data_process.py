@@ -660,41 +660,6 @@ def boxplot_(sim, scenario):
     plt.show()
     fig.savefig('./data/LOBSTERdata/output/sim/' + scenario + '/boxplot_grOU.eps', bbox_inches='tight', format='eps')
 
-def dm_test(y, yhat1, yhat2, loss='rmse', h=1, q=None):
-    # y, yhat*: arrays (T,K)
-    if loss.lower() == 'rmse':
-        e1 = y - yhat1
-        e2 = y - yhat2
-        L1 = np.sqrt(np.mean(e1 ** 2, axis=(1,2)))
-        L2 = np.sqrt(np.mean(e2 ** 2, axis=(1,2)))
-    elif loss.lower() == 'mse':
-        e1 = y - yhat1
-        e2 = y - yhat2
-        L1 = np.mean(e1 ** 2, axis=(1,2))
-        L2 = np.mean(e2 ** 2, axis=(1,2))
-    elif loss.lower() == 'dir':
-        L1 = (y != yhat1).mean(axis=(1,2))
-        L2 = (y != yhat2).mean(axis=(1,2))
-    else:
-        raise ValueError("loss in {'rmse','dir', 'mse'}")
-    d = L1 - L2
-    T = d.shape[0]
-    d_bar = d.mean()
-    if q is None:
-        q = max(h - 1, 0)
-    d_c = np.squeeze(d - d_bar)
-    gamma0 = np.dot(d_c, d_c) / T
-    if q == 0:
-        S = gamma0
-    else:
-        gammas = [np.dot(d_c[j:], d_c[:-j]) / T for j in range(1, q + 1)]
-        S = gamma0 + 2 * sum(gammas)
-    DM = d_bar / np.sqrt(S / T)
-    hln = np.sqrt((T + 1 - 2 * h + h * (h - 1) / T) / T)
-    DM_hln = DM * hln
-    pval = 2 * (1 - norm.cdf(np.abs(DM_hln)))
-    return DM_hln, pval
-
 def evaluate_forecast(Y, forecast, test_set):
     rmse = np.sqrt(np.mean((forecast - test_set) ** 2))
     last_ = np.append(np.array(Y.copy())[:, -1].reshape(-1, 1)[np.newaxis, :, :], test_set[:-1, :, 0:1], axis=0)
@@ -731,7 +696,7 @@ def UAR_model(Y, test_set, test_size, forecast_step, lag=None, save=False):
                 X_lags = np.column_stack([window_data[lag - s:T_train - s] for s in range(1, lag + 1)])
                 X = np.column_stack([np.ones(T_train - lag), X_lags])
 
-                beta, *_ = np.linalg.lstsq(X, target)
+                beta= np.linalg.pinv(X) @ target
 
                 # Recursive forecast using rolling lag buffer
                 recent = window_data[-lag:].copy()
@@ -778,7 +743,7 @@ def VAR_model(Y, test_set, test_size, forecast_step, lag=None, save=False):
             X_lags = np.hstack([window_data[lag - s:T_train - s, :] for s in range(1, lag + 1)])
             X = np.column_stack([np.ones(T_train - lag), X_lags])
 
-            B, *_ = np.linalg.lstsq(X, target, rcond=None)
+            B = np.linalg.pinv(X) @ target
 
             recent = window_data[-lag:, :].copy()
             preds = np.zeros((forecast_step, K))
@@ -946,7 +911,7 @@ def MCAR_edge_model(Y, test_set, test_size, forecast_step, P_, Q_, R_L, C, gamma
 
         # Precompute for speed-up
         eQ = scipy.linalg.expm(Q_Q)
-        Q_inv = np.linalg.pinv(Q_Q)
+        Q_inv = Q_QQ_inverse(Q_Q, K)
         eQt = scipy.linalg.fractional_matrix_power(eQ, P_[1] - P_[0]).real
 
         for n in range(forecast_step):
@@ -1013,7 +978,7 @@ def OU_edge_model(Y, test_set, test_size, forecast_step, R_L, C, P_, Q_, gamma, 
 
         # Precompute for speed-up
         eQ = scipy.linalg.expm(Q_Q)
-        Q_inv = np.linalg.pinv(Q_Q)
+        Q_inv = Q_QQ_inverse(Q_Q, K)
         eQt = scipy.linalg.fractional_matrix_power(eQ, P_[1] - P_[0]).real
 
         for n in range(forecast_step):
@@ -1099,11 +1064,7 @@ def grOU_edge_model(Y, Adj, test_set, test_size, forecast_step, R_L, C, P_, Q_, 
 
         # Precompute for speed-up
         eQ = scipy.linalg.expm(Q_Q)
-        try:
-            Q_inv = np.linalg.pinv(Q_Q)
-        except:
-            Q_Q = Q_Q + 1e-8 * np.eye(Q_Q.shape[0])
-            Q_inv = np.linalg.pinv(Q_Q)
+        Q_inv = Q_QQ_inverse(Q_Q, K)
         eQt = scipy.linalg.fractional_matrix_power(eQ, P_[1] - P_[0]).real
 
         for n in range(forecast_step):
