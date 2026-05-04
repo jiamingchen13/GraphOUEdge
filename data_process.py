@@ -672,48 +672,104 @@ def UAR_model(Y, test_set, test_size, forecast_step, lag=None, save=False):
     # Univariate AR Edge Model
 
     K, T_train = Y.shape
-    df_AR = np.empty((K, T_train + test_size))
-    df_AR[:, :T_train] = Y
-    df_AR[:, T_train:] = test_set[:, :, 0].T
+    total_T = T_train + test_size
+
+    data = np.empty((K, total_T))
+    data[:, :T_train] = Y
+    data[:, T_train:] = test_set[:, :, 0].T
+
     forecast_AR = np.zeros((test_size, K, forecast_step))
+
+    # -------------------------------------------------
+    # Choose one common lag if lag is None
+    # -------------------------------------------------
     if lag is None:
-        aic_values = []
-        best_p = np.zeros((K,))
-        for i in range(K):
-            for p in range(1, 13):
-                model = AutoReg(df_AR[i, :T_train], lags=p).fit()
-                aic_values.append((p, model.aic))
-            best_p[i] = min(aic_values, key=lambda x: x[1])[0]
+        mean_aic_by_p = []
 
-    for i in range(test_size):
-        for j in range(K):
-            window_data = df_AR[j, i:T_train + i]
-            if lag is None:
-                model = AutoReg(window_data, lags=best_p[j]).fit()
-                forecast_AR[i, j, :] = model.predict(start=len(window_data), end=len(window_data) + forecast_step - 1)
+        for p in range(1, 13):
+            aics = []
+            for j in range(K):
+                try:
+                    fit = AutoReg(data[j, :T_train], lags=p, old_names=False).fit()
+                    aics.append(fit.aic)
+                except Exception:
+                    pass
+
+            if len(aics) == 0:
+                mean_aic_by_p.append((p, np.inf))
             else:
-                target = window_data[lag:]
-                X_lags = np.column_stack([window_data[lag - s:T_train - s] for s in range(1, lag + 1)])
-                X = np.column_stack([np.ones(T_train - lag), X_lags])
+                mean_aic_by_p.append((p, float(np.mean(aics))))
 
-                beta = np.linalg.lstsq(X, target, rcond=None)[0]
+        p = min(mean_aic_by_p, key=lambda x: x[1])[0]
+    else:
+        p = int(lag)
 
-                # Recursive forecast using rolling lag buffer
-                recent = window_data[-lag:].copy()
-                preds = np.zeros(forecast_step)
+    n_rows = T_train - p
+    if n_rows <= 0:
+        raise ValueError(f"lag={p} too large for T_train={T_train}")
 
-                for s in range(forecast_step):
-                    x = np.empty(lag + 1)
-                    x[0] = 1.0
-                    x[1:] = recent[::-1]
+    q = p + 1
+    n_total_rows = total_T - p
 
-                    y_next = x @ beta
-                    preds[s] = y_next
+    # -------------------------------------------------
+    # Build all regression rows for all nodes at once
+    # X_all shape: (K, n_total_rows, q)
+    # y_all shape: (K, n_total_rows)
+    # -------------------------------------------------
+    X_all = np.empty((K, n_total_rows, q))
+    X_all[:, :, 0] = 1.0
 
-                    if lag > 1:
-                        recent[:-1] = recent[1:]
-                    recent[-1] = y_next
-                forecast_AR[i, j, :] = preds
+    for s in range(1, p + 1):
+        X_all[:, :, s] = data[:, p - s: total_T - s]
+
+    y_all = data[:, p: total_T]
+
+    # -------------------------------------------------
+    # Initial rolling window cross-products
+    # XtX shape: (K, q, q)
+    # Xty shape: (K, q)
+    # -------------------------------------------------
+    X0 = X_all[:, :n_rows, :]      # (K, n_rows, q)
+    y0 = y_all[:, :n_rows]         # (K, n_rows)
+
+    XtX = np.einsum('knq,knr->kqr', X0, X0)
+    Xty = np.einsum('knq,kn->kq', X0, y0)
+
+    # -------------------------------------------------
+    # Rolling windows
+    # -------------------------------------------------
+    for i in range(test_size):
+        # Solve all node regressions in batch
+        beta = np.linalg.solve(XtX, Xty[..., None]).squeeze(-1)   # (K, q)
+
+        # Forecast recursively for all nodes
+        hist = np.empty((K, T_train + forecast_step))
+        hist[:, :T_train] = data[:, i:T_train + i]
+
+        for s in range(forecast_step):
+            # Build batched predictor rows for all nodes
+            x = np.empty((K, q))
+            x[:, 0] = 1.0
+            for ell in range(1, p + 1):
+                x[:, ell] = hist[:, T_train + s - ell]
+
+            y_next = np.einsum('kq,kq->k', x, beta)
+            hist[:, T_train + s] = y_next
+            forecast_AR[i, :, s] = y_next
+
+        # Rolling update
+        if i < test_size - 1:
+            x_out = X_all[:, i, :]             # (K, q)
+            y_out = y_all[:, i]                # (K,)
+            x_in = X_all[:, i + n_rows, :]     # (K, q)
+            y_in = y_all[:, i + n_rows]        # (K,)
+
+            XtX -= np.einsum('kq,kr->kqr', x_out, x_out)
+            XtX += np.einsum('kq,kr->kqr', x_in, x_in)
+
+            Xty -= x_out * y_out[:, None]
+            Xty += x_in * y_in[:, None]
+
     if save:
         with open(os.path.join('data\\LOBSTERdata\\output\\train\\aggregate', 'forecast_AR.npy'), 'wb') as f:
             np.save(f, forecast_AR)
@@ -724,42 +780,91 @@ def VAR_model(Y, test_set, test_size, forecast_step, lag=None, save=False):
     # VAR Edge Model
 
     K, T_train = Y.shape
-    df_VAR = np.empty((T_train + test_size, K))
+    total_T = T_train + test_size
+
+    df_VAR = np.empty((total_T, K))
     df_VAR[:T_train, :] = Y.T
     df_VAR[T_train:, :] = test_set[:, :, 0]
-    model = VAR(df_VAR[:T_train, :])
+
     forecast_VAR = np.zeros((test_size, K, forecast_step))
+
+    # -----------------------------------------
+    # Choose lag once on initial training sample
+    # -----------------------------------------
     if lag is None:
-        # Automatic lag selection by AIC
-        best_lag_var = model.select_order(maxlags=12).aic
+        model0 = VAR(df_VAR[:T_train, :])
+        best_lag_var = model0.select_order(maxlags=12).aic
+        p = int(best_lag_var)
+    else:
+        p = int(lag)
 
+    n_rows = T_train - p
+    if n_rows <= 0:
+        raise ValueError(f"lag={p} too large for T_train={T_train}")
+
+    q = 1 + p * K
+    n_total_rows = total_T - p
+
+    # -----------------------------------------
+    # Build all regression rows once
+    # X_g = [1, y_{g+p-1}', y_{g+p-2}',..., y_g']
+    # target_g = y_{g+p}
+    # -----------------------------------------
+    X_all = np.empty((n_total_rows, q))
+    X_all[:, 0] = 1.0
+
+    col = 1
+    for s in range(1, p + 1):
+        X_all[:, col:col + K] = df_VAR[p - s:total_T - s, :]
+        col += K
+
+    Y_all = df_VAR[p:total_T, :]  # shape (n_total_rows, K)
+
+    # Initial rolling window corresponds to rows [0 : n_rows)
+    X0 = X_all[:n_rows, :]
+    Y0 = Y_all[:n_rows, :]
+
+    XtX = X0.T @ X0  # shape (q, q)
+    XtY = X0.T @ Y0  # shape (q, K)
+
+    # -----------------------------------------
+    # Rolling windows
+    # -----------------------------------------
     for i in range(test_size):
-        window_data = df_VAR[i:T_train + i, :]
-        if lag is None:
-            model = VAR(window_data).fit(best_lag_var)
-            forecast_VAR[i, :, :] = model.forecast(window_data[-model.k_ar:, :], steps=forecast_step).T
-        else:
-            target = window_data[lag:, :]  # shape (T_train-p, K)
-            X_lags = np.hstack([window_data[lag - s:T_train - s, :] for s in range(1, lag + 1)])
-            X = np.column_stack([np.ones(T_train - lag), X_lags])
+        # Fit coefficients for current window
+        B = np.linalg.solve(XtX, XtY)  # shape (q, K)
 
-            B = np.linalg.lstsq(X, target, rcond=None)[0]
+        # Forecast recursively
+        hist = np.empty((T_train + forecast_step, K))
+        hist[:T_train, :] = df_VAR[i:T_train + i, :]
 
-            recent = window_data[-lag:, :].copy()
-            preds = np.zeros((forecast_step, K))
+        preds = np.zeros((forecast_step, K))
 
-            for s in range(forecast_step):
-                x = np.empty(1 + lag * K)
-                x[0] = 1.0
-                x[1:] = recent[::-1, :].reshape(-1)
+        for s in range(forecast_step):
+            x = np.empty(q)
+            x[0] = 1.0
+            x[1:] = hist[T_train + s - p:T_train + s, :][::-1, :].reshape(-1)
 
-                y_next = x @ B
-                preds[s, :] = y_next
+            y_next = x @ B
+            preds[s, :] = y_next
+            hist[T_train + s, :] = y_next
 
-                if lag > 1:
-                    recent[:-1, :] = recent[1:, :]
-                recent[-1, :] = y_next
-            forecast_VAR[i, :, :] = preds.T
+        forecast_VAR[i, :, :] = preds.T
+
+        # Update XtX, XtY for next rolling window
+        if i < test_size - 1:
+            x_out = X_all[i, :]  # outgoing row
+            y_out = Y_all[i, :]  # outgoing target
+
+            x_in = X_all[i + n_rows, :]  # incoming row
+            y_in = Y_all[i + n_rows, :]  # incoming target
+
+            XtX -= np.outer(x_out, x_out)
+            XtX += np.outer(x_in, x_in)
+
+            XtY -= np.outer(x_out, y_out)
+            XtY += np.outer(x_in, y_in)
+
     if save:
         with open(os.path.join('data\\LOBSTERdata\\output\\train\\aggregate', 'forecast_VAR.npy'), 'wb') as f:
             np.save(f, forecast_VAR)
@@ -771,87 +876,266 @@ def GNAR_model(Y, Adj, R_L, test_set, test_size, forecast_step, is_global = Fals
 
     p = len(R_L)
     K, T_train = Y.shape
-
-    # Derive the adjacency matrix for edge graph
-    Adj_L = np.array(adjacency_matrices(Adj[0], max(R_L)))
-
-    # Compute the edge weight
-    W_C = edge_weight(Adj_L)
-
-    df_GNAR = np.empty((T_train + test_size, K))
-    df_GNAR[:T_train, :] = Y.T
-    df_GNAR[T_train:, :] = test_set[:, :, 0]
-    forecast_GNAR = np.zeros((test_size, K, forecast_step))
-
+    total_T = T_train + test_size
     n_rows = T_train - p
-    n_neigh = sum(R_L)
 
+    if n_rows <= 0:
+        raise ValueError(f"Need p < T_train, got p={p}, T_train={T_train}")
+
+    # -------------------------------------------------
+    # Full data buffer: time x node
+    # -------------------------------------------------
+    data = np.empty((total_T, K), dtype=np.float64)
+    data[:T_train, :] = Y.T
+    data[T_train:, :] = test_set[:, :, 0]
+
+    # -------------------------------------------------
+    # Graph weights
+    # -------------------------------------------------
+    max_r = max(R_L) if len(R_L) > 0 else 0
+    Adj_L = np.array(adjacency_matrices(Adj[0], max_r))
+    W_C_raw = edge_weight(Adj_L)
+
+    W_C = []
+    for w in W_C_raw:
+        W_C.append(np.asarray(w, dtype=np.float64))
+
+    # -------------------------------------------------
+    # Precompute lag blocks over the whole timeline
+    #
+    # lag_all[l-1, g, k] = data[p-l+g, k]
+    # target_all[g, k]   = data[p+g, k]
+    #
+    # g = 0,..., total_T-p-1
+    # -------------------------------------------------
+    n_total_rows = total_T - p
+
+    lag_all = np.empty((p, n_total_rows, K), dtype=np.float64)
+    for l in range(1, p + 1):
+        lag_all[l - 1] = data[p - l: total_T - l, :]
+
+    target_all = data[p: total_T, :]  # (n_total_rows, K)
+
+    # -------------------------------------------------
+    # Precompute all neighbor blocks
+    # neigh_all[l][r] shape = (n_total_rows, K)
+    # -------------------------------------------------
+    neigh_all = []
+    for l in range(p):
+        lag_block = lag_all[l]
+        neigh_l = []
+        for r in range(R_L[l]):
+            neigh_l.append(lag_block @ W_C[r].T)
+        neigh_all.append(neigh_l)
+
+    # -------------------------------------------------
+    # Parameter indexing
+    # -------------------------------------------------
     if is_global:
-        n_params = p + n_neigh
+        q_alpha = p
     else:
-        n_params = p * K + n_neigh
+        q_alpha = p * K
 
+    q_beta = sum(R_L)
+    q = q_alpha + q_beta
+
+    beta_offsets = np.cumsum([0] + R_L[:-1])
+    beta_base = q_alpha
+
+    forecast_GNAR = np.zeros((test_size, K, forecast_step), dtype=np.float64)
+
+    # -------------------------------------------------
+    # Build per-row feature vectors Phi[g]
+    #
+    # For global:
+    #   phi_g = [
+    #       sum_k Z[0,g,k]?  NO
+    #   ]
+    #
+    # Careful:
+    # We are fitting stacked equations across nodes.
+    # So row g contributes K equation rows.
+    #
+    # Instead of materializing all K rows, we build sufficient-stat contributions
+    # per time g directly:
+    #
+    # XtX += Phi_g
+    # Xty += psi_g
+    #
+    # where Phi_g already includes summation over nodes.
+    # -------------------------------------------------
+
+    def row_contribution(g):
+        """
+        Returns (Sxx_g, Sxy_g) contribution of time row g,
+        already summed over nodes/equations.
+        """
+        Sxx_g = np.zeros((q, q), dtype=np.float64)
+        Sxy_g = np.zeros(q, dtype=np.float64)
+        y_g = target_all[g]  # (K,)
+
+        if is_global:
+            # alpha features: each lag contributes full vector over nodes
+            alpha_blocks = [lag_all[l, g] for l in range(p)]  # each (K,)
+            beta_blocks = []
+            for l in range(p):
+                for r in range(R_L[l]):
+                    beta_blocks.append(neigh_all[l][r][g])  # each (K,)
+
+            # alpha-target
+            for l in range(p):
+                Sxy_g[l] = np.dot(alpha_blocks[l], y_g)
+
+            # alpha-alpha
+            for l in range(p):
+                for m in range(l, p):
+                    val = np.dot(alpha_blocks[l], alpha_blocks[m])
+                    Sxx_g[l, m] = val
+                    Sxx_g[m, l] = val
+
+            # beta-target
+            for b, Nb in enumerate(beta_blocks):
+                idxb = beta_base + b
+                Sxy_g[idxb] = np.dot(Nb, y_g)
+
+            # beta-beta
+            for b1, N1 in enumerate(beta_blocks):
+                idx1 = beta_base + b1
+                for b2 in range(b1, len(beta_blocks)):
+                    idx2 = beta_base + b2
+                    val = np.dot(N1, beta_blocks[b2])
+                    Sxx_g[idx1, idx2] = val
+                    Sxx_g[idx2, idx1] = val
+
+            # alpha-beta
+            for l in range(p):
+                for b, Nb in enumerate(beta_blocks):
+                    idxb = beta_base + b
+                    val = np.dot(alpha_blocks[l], Nb)
+                    Sxx_g[l, idxb] = val
+                    Sxx_g[idxb, l] = val
+
+        else:
+            # Node-specific alpha
+            # alpha coordinates are ordered by lag-major:
+            # [alpha_(l=1,k=1..K), alpha_(l=2,k=1..K),...]
+            #
+            # alpha-target
+            for l in range(p):
+                start = l * K
+                z = lag_all[l, g]  # (K,)
+                Sxy_g[start:start + K] = z * y_g
+
+            # alpha-alpha
+            # only same node survives, so blocks are diagonal
+            for l in range(p):
+                z_l = lag_all[l, g]
+                sl = l * K
+                for m in range(p):
+                    z_m = lag_all[m, g]
+                    sm = m * K
+                    Sxx_g[sl:sl + K, sm:sm + K] = np.diag(z_l * z_m)
+
+            # beta blocks
+            beta_blocks = []
+            for l in range(p):
+                for r in range(R_L[l]):
+                    beta_blocks.append(neigh_all[l][r][g])  # (K,)
+
+            # beta-target
+            for b, Nb in enumerate(beta_blocks):
+                idxb = beta_base + b
+                Sxy_g[idxb] = np.dot(Nb, y_g)
+
+            # beta-beta
+            for b1, N1 in enumerate(beta_blocks):
+                idx1 = beta_base + b1
+                for b2 in range(b1, len(beta_blocks)):
+                    idx2 = beta_base + b2
+                    val = np.dot(N1, beta_blocks[b2])
+                    Sxx_g[idx1, idx2] = val
+                    Sxx_g[idx2, idx1] = val
+
+            # alpha-beta
+            for l in range(p):
+                sl = l * K
+                z_l = lag_all[l, g]  # (K,)
+                for b, Nb in enumerate(beta_blocks):
+                    idxb = beta_base + b
+                    val_vec = z_l * Nb
+                    Sxx_g[sl:sl + K, idxb] = val_vec
+                    Sxx_g[idxb, sl:sl + K] = val_vec
+
+        return Sxx_g, Sxy_g
+
+    # -------------------------------------------------
+    # Initial sufficient statistics
+    # -------------------------------------------------
+    XtX = np.zeros((q, q), dtype=np.float64)
+    Xty = np.zeros(q, dtype=np.float64)
+
+    row_cache_xx = []
+    row_cache_xy = []
+
+    for g in range(n_rows):
+        Sxx_g, Sxy_g = row_contribution(g)
+        row_cache_xx.append(Sxx_g)
+        row_cache_xy.append(Sxy_g)
+        XtX += Sxx_g
+        Xty += Sxy_g
+
+    # -------------------------------------------------
+    # Rolling windows
+    # -------------------------------------------------
     for i in range(test_size):
-        window_data = df_GNAR[i:Y.shape[1] + i, :]
+        theta = np.linalg.solve(XtX, Xty)
 
-        Y_target = window_data[p:]
-        Y_vec = Y_target.reshape(-1)
-
-        # Preallocate design matrix
-        D = np.zeros((n_rows * K, n_params))
-
-        col_idx = 0
-
-        for j in range(1, p + 1):
-            x_lag = window_data[p - j:T_train - j, :]
-
-            if is_global:
-                # One shared own-lag coefficient per lag
-                # contributes K rows per time point, same coefficient column
-                D[:, col_idx] = x_lag.reshape(-1)
-                col_idx += 1
-            else:
-                # Node-specific own-lag coefficients
-                # For each node k, fill rows corresponding to node k
-                for k in range(K):
-                    D[k::K, col_idx + k] = x_lag[:, k]
-                col_idx += K
-
-            # Neighbor effects for this lag
-            for r in range(R_L[j - 1]):
-                wx = x_lag @ W_C[r].T
-                D[:, col_idx] = wx.reshape(-1)
-                col_idx += 1
-
-        theta = np.linalg.lstsq(D, Y_vec, rcond=None)[0]
-
-        hist = window_data.copy()
-        y_fc = np.zeros((forecast_step, K))
+        # Forecast recursively
+        hist = np.empty((T_train + forecast_step, K), dtype=np.float64)
+        hist[:T_train, :] = data[i:T_train + i, :]
+        preds = np.zeros((forecast_step, K), dtype=np.float64)
 
         for s in range(forecast_step):
-            x_next = np.zeros(K)
-            idx = 0
+            x_next = np.zeros(K, dtype=np.float64)
 
-            for j in range(1, p + 1):
-                x_lag = hist[-j]
+            # alpha part
+            if is_global:
+                for l in range(1, p + 1):
+                    x_next += theta[l - 1] * hist[T_train + s - l, :]
+            else:
+                for l in range(1, p + 1):
+                    alpha_vec = theta[(l - 1) * K:l * K]
+                    x_next += alpha_vec * hist[T_train + s - l, :]
 
-                if is_global:
-                    alpha_j = theta[idx]
-                    idx += 1
-                    x_next += alpha_j * x_lag
-                else:
-                    alpha_j_vec = theta[idx:idx + K]
-                    idx += K
-                    x_next += alpha_j_vec * x_lag
+            # beta part
+            flat_beta_idx = 0
+            for l in range(1, p + 1):
+                x_lag = hist[T_train + s - l, :]
+                for r in range(R_L[l - 1]):
+                    idxb = beta_base + flat_beta_idx
+                    x_next += theta[idxb] * (W_C[r] @ x_lag)
+                    flat_beta_idx += 1
 
-                for r in range(R_L[j - 1]):
-                    beta_jr = theta[idx]
-                    idx += 1
-                    x_next += beta_jr * (W_C[r] @ x_lag)
+            preds[s, :] = x_next
+            hist[T_train + s, :] = x_next
 
-            y_fc[s] = x_next
-            hist = np.vstack([hist, x_next])
-        forecast_GNAR[i, :, :] = y_fc.T
+        forecast_GNAR[i, :, :] = preds.T
+
+        # rolling update
+        if i < test_size - 1:
+            # outgoing row index = i
+            XtX -= row_cache_xx[i]
+            Xty -= row_cache_xy[i]
+
+            # incoming row index = i + n_rows
+            g_in = i + n_rows
+            Sxx_in, Sxy_in = row_contribution(g_in)
+            row_cache_xx.append(Sxx_in)
+            row_cache_xy.append(Sxy_in)
+
+            XtX += Sxx_in
+            Xty += Sxy_in
+
     if save:
         with open(os.path.join('data\\LOBSTERdata\\output\\train\\aggregate', 'forecast_GNAR.npy'), 'wb') as f:
             np.save(f, forecast_GNAR)
