@@ -3,6 +3,7 @@ import glob
 import math
 import re
 import time
+import networkx as nx
 import pandas as pd
 import matplotlib.pyplot as plt
 from scipy.stats import gaussian_kde, norm
@@ -424,8 +425,7 @@ def worker(arg):
     _data, test_data_, TICKERS, R_L, P_, Q_, forecast_step, C, gamma, i = arg
 
     np.random.seed(i)
-    A = np.triu(np.random.randint(0, 2, (8, 8)), 1)
-    A += A.T
+    A = nx.to_numpy_array(nx.erdos_renyi_graph(len(TICKERS), 0.4))
 
     # Derive network structure
     Adj = adj_to_line_graph(A, TICKERS)
@@ -441,11 +441,11 @@ def worker(arg):
     test_set = sliding_window_view(test_Y, (K, forecast_step))[0]
     test_size = test_set.shape[0]
 
-    forecast_AR = UAR_model(Y, test_set, test_size, forecast_step, lag=len(R_L))
-    _, direction_acc_AR = evaluate_forecast(Y, forecast_AR, test_set)
+    forecast_GNAR = GNAR_model(Y, Adj, R_L, test_set, test_size, forecast_step)
+    _, direction_acc_GNAR = evaluate_forecast(Y, forecast_GNAR, test_set)
     forecast_grOU =  grOU_edge_model(Y, Adj, test_set, test_size, forecast_step, R_L, C, P_, Q_, gamma)
     _, direction_acc_grOU = evaluate_forecast(Y, forecast_grOU, test_set)
-    return direction_acc_grOU - direction_acc_AR, A, (direction_acc_grOU - direction_acc_AR)/direction_acc_AR
+    return direction_acc_grOU - direction_acc_GNAR, A, (direction_acc_grOU - direction_acc_GNAR)/direction_acc_GNAR
 
 def process_one_sim(arg):
     P, R_L, K, C, Y, adj_L_sim, W_C_sim, gamma = arg
