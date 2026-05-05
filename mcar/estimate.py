@@ -46,12 +46,7 @@ def estimate_grOU_drift(Y: np.ndarray, A: np.ndarray, W_C: List, R_L: List, C: i
 
     if not all([u in P for u in Q]):
         raise ValueError('P must be refinement of Q.')
-    indices = [False] * len(P)
-    j = 0
-    for i, s in enumerate(P):
-        if s == Q[j]:
-            indices[i] = True
-            j += 1
+    indices = np.isin(P, Q)
 
     X = state_space(Y, p, P)
     X = X[:, indices]
@@ -76,9 +71,7 @@ def estimate_grOU_drift(Y: np.ndarray, A: np.ndarray, W_C: List, R_L: List, C: i
 
     # If nu is not provided choose from data
     if nu is None:
-        nu = np.zeros_like(DY)
-        for i in range(d):
-            nu[i, :] = choose_nu(DY[i:i + 1, :], Q, gamma)
+        nu = np.vstack([choose_nu(DY[i:i + 1, :], Q, gamma) for i in range(d)])
 
     # Get thresholded increments
     DY_thresh = DY * (np.abs(DY) < nu)
@@ -170,15 +163,9 @@ def estimate_grOU_drift(Y: np.ndarray, A: np.ndarray, W_C: List, R_L: List, C: i
             if k == 0:
                 integrand = X[-d:, :]
             else:
-                integrand = X[-d-k*d:-k*d, :]
+                integrand = X[-d - k * d:-k * d, :]
             integral_ = integrand[:, :-1] @ DY_thresh.T
-            for i in range(d):
-                integral = np.zeros(d)
-                integrand_row = integrand[i, :]
-                for j in range(d):
-                    # Left-hand Riemann sum (converges in L2 to Ito Integral)
-                    integral[j] = np.sum(integrand_row[:-1] * DY_thresh[j, :])
-                K[idx + i] = -np.matmul(Sigma_inv, integral)[i]
+            K[idx:idx + d] = -np.diag(Sigma_inv @ integral_.T)
             base_offset = idx + d
             for c in range(C):
                 for r in range(R_L[k]):
@@ -258,12 +245,7 @@ def estimate_OU_drift(Y: np.ndarray, R_L: List, C: int, P: np.ndarray, Q: np.nda
 
     if not all([u in P for u in Q]):
         raise ValueError('P must be refinement of Q.')
-    indices = [False] * len(P)
-    j = 0
-    for i, s in enumerate(P):
-        if s == Q[j]:
-            indices[i] = True
-            j += 1
+    indices = np.isin(P, Q)
 
     X = state_space(Y, p, P)
     X = X[:, indices]
@@ -290,9 +272,7 @@ def estimate_OU_drift(Y: np.ndarray, R_L: List, C: int, P: np.ndarray, Q: np.nda
 
     # If nu is not provided choose from data
     if nu is None:
-        nu = np.zeros_like(DY)
-        for i in range(d):
-            nu[i, :] = choose_nu(DY[i:i + 1, :], Q, gamma)
+        nu = np.vstack([choose_nu(DY[i:i + 1, :], Q, gamma) for i in range(d)])
 
     # Get thresholded increments
     DY_thresh = DY * (np.abs(DY) < nu)
@@ -340,31 +320,40 @@ def estimate_OU_drift(Y: np.ndarray, R_L: List, C: int, P: np.ndarray, Q: np.nda
             vec_theta_hat = np.repeat(np.matmul(np.linalg.pinv(KK), K)[:, np.newaxis], d, axis=1)
 
     else:
-        # Compute K
-        K = np.zeros(p * d)
-        for k in range(p):
-            for i in range(d):
-                integral = np.zeros(d)
-                # (i+1)-th entry of D^{p-k-1}Y
-                integrand = X[-(k + 1) * d + i, :]
-                for j in range(d):
-                    # Left-hand Riemann sum (converges in L2 to Ito Integral)
-                    integral[j] = np.sum(integrand[:-1] * DY_thresh[j, :])
-                K[k * d + i] = - np.matmul(Sigma_inv, integral)[i]
+        # Build lag blocks:
+        # X_blocks[k] has shape (d, len(Q))
+        # and corresponds to rows X[-(k+1)*d : -k*d] in forward lag order
+        X_blocks = np.stack([X[-(k + 1) * d: -k * d if k > 0 else None, :] for k in range(p)], axis=0)
 
-        # Compute [K]
-        KK = np.zeros((p * d, p * d))
+        # ----------------------------------------------------------
+        # Compute K
+        # ----------------------------------------------------------
+        K = np.zeros(p * d)
+
         for k in range(p):
-            for i in range(d):
-                # (i+1)-th entry of D^{p-k-1}Y
-                integrand_one = X[-(k + 1) * d + i, :]
-                for l in range(p):
-                    for j in range(d):
-                        # (j+1)-th entry of D^{p-l-1}Y
-                        integrand_two = X[-(l + 1) * d + j, :]
-                        # Left-hand Riemann sum (converges a.s. to Riemann Integral, for any choice of mid-point)
-                        integral = np.sum(integrand_one[:-1] * integrand_two[:-1] * np.diff(Q))
-                        KK[k * d + i, l * d + j] = Sigma_inv[i, j] * integral
+            # integral_mat[i, j] = sum_t X_blocks[k, i, t] * DY_thresh[j, t]
+            integral_mat = X_blocks[k, :, :-1] @ DY_thresh.T
+
+            # original:
+            # K[k*d + i] = -(Sigma_inv @ integral_row_i)[i]
+            K[k * d:(k + 1) * d] = -np.diag(Sigma_inv @ integral_mat.T)
+
+        # ----------------------------------------------------------
+        # Compute [K]
+        # ----------------------------------------------------------
+        KK = np.zeros((p * d, p * d))
+
+        for k in range(p):
+            A_k = X_blocks[k, :, :-1] * np.diff(Q)
+
+            for l in range(p):
+                B_l = X_blocks[l, :, :-1]
+
+                # integral_mat[i, j] = sum_t integrand_one[i,t] * integrand_two[j,t] * dQ[t]
+                integral_mat = A_k @ B_l.T
+
+                KK[k * d:(k + 1) * d, l * d:(l + 1) * d] = Sigma_inv * integral_mat
+
         try:
             vec_theta_hat = np.linalg.solve(KK, K).reshape(p, d)
         except:
@@ -403,12 +392,8 @@ def estimate_MCAR_drift(Y: np.ndarray, R_L: List, P: np.ndarray, Q: np.ndarray, 
 
     if not all([u in P for u in Q]):
         raise ValueError('P must be refinement of Q.')
-    indices = [False] * len(P)
-    j = 0
-    for i, s in enumerate(P):
-        if s == Q[j]:
-            indices[i] = True
-            j += 1
+    indices = np.isin(P, Q)
+
     X = state_space(Y, p, P)
     X = X[:, indices]
     x0 = X[:, 0]
@@ -431,39 +416,39 @@ def estimate_MCAR_drift(Y: np.ndarray, R_L: List, P: np.ndarray, Q: np.ndarray, 
 
     # If nu is not provided choose from data
     if nu is None:
-        nu = np.zeros_like(DY)
-        for i in range(d):
-            nu[i, :] = choose_nu(DY[i:i + 1, :], Q, gamma)
+        nu = np.vstack([choose_nu(DY[i:i + 1, :], Q, gamma) for i in range(d)])
 
     # Get thresholded increments
     DY_thresh = DY * (np.abs(DY) < nu)
 
-    # Compute K
-    K = np.zeros(p * d ** 2)
-    for k in range(p):
-        for i in range(d):
-            integral = np.zeros((d,))
-            # (i+1)-th entry of D^{p-k}Y
-            integrand = X[-(k + 1) * d + i, :]
-            for j in range(d):
-                # left-hand Riemann sum (converges in L2 to Ito Integral)
-                integral[j] = np.sum(integrand[:-1] * DY_thresh[j, :])
-            K[k * d ** 2 + i * d:k * d ** 2 + (i + 1) * d] = - np.matmul(Sigma_inv, integral).reshape(-1)
+    # Build lag blocks:
+    # X_blocks[k] has shape (d, len(Q))
+    X_blocks = np.stack([X[-(k + 1) * d: -k * d if k > 0 else None, :] for k in range(p)], axis=0)  # shape (p, d, len(Q))
 
-    # compute [K]
-    KK = np.zeros((p * d ** 2, p * d ** 2))
-    for k in range(p):
-        for i in range(d):
-            for l in range(p):
-                for j in range(d):
-                    # (i+1)-th entry of D^{p-k}Y
-                    integrand_one = X[-(k + 1) * d + i, :]
-                    # (j+1)-th entry of D^{p-l}Y
-                    integrand_two = X[-(l + 1) * d + j, :]
-                    # left-hand Riemann sum (converges a.s. to Riemann Integral, for any choice of mid-point)
-                    integral = np.sum(integrand_one[:-1] * integrand_two[:-1] * np.diff(Q))
-                    KK[k * d ** 2 + i * d:k * d ** 2 + (i + 1) * d, l * d ** 2 + j * d:l * d ** 2 + (
-                                j + 1) * d] = Sigma_inv * integral
+    # ----------------------------------------------------------
+    # Compute K
+    # ----------------------------------------------------------
+    # G[k, i, j] = sum_t X_blocks[k, i, t] * DY_thresh[j, t]
+    G = X_blocks[:, :, :-1] @ DY_thresh.T  # shape (p, d, d)
+
+    # Apply Sigma_inv on the left of each row-vector-as-column:
+    # for fixed (k,i), original block is -Sigma_inv @ G[k,i,:]
+    K = -(G @ Sigma_inv.T).reshape(p * d * d)
+
+    # ----------------------------------------------------------
+    # Compute [K]
+    # ----------------------------------------------------------
+    # H[k, i, l, j] = sum_t X_blocks[k, i, t] * X_blocks[l, j, t] * dQ[t]
+    H = np.einsum('kit,ljt,t->kilj', X_blocks[:, :, :-1], X_blocks[:, :, :-1], np.diff(Q))
+    # shape (p, d, p, d)
+
+    # Each scalar H[k,i,l,j] multiplies the full matrix Sigma_inv
+    KK = H[:, :, :, :, None, None] * Sigma_inv[None, None, None, None, :, :]
+    # shape (p, d, p, d, d, d)
+
+    # Rearrange into 2D block matrix:
+    KK = KK.transpose(0, 1, 4, 2, 3, 5).reshape(p * d * d, p * d * d)
+
     try:
         vec_QQ_hat = np.linalg.solve(KK, K)
     except:

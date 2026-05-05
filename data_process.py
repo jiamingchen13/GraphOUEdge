@@ -412,7 +412,7 @@ def kalman_filter_mcar_BM(Y, Q_QQ, Sigma, P_, Q_, QQ_hat, gamma):
         # 2) Update
         v = Y_Q[:, k] - H @ m_pred
         S = H @ P_pred @ H.T
-        K = P_pred @ H.T @ np.linalg.pinv(S)
+        K = np.linalg.solve(S, H @ P_pred).T
 
         m = m_pred + K @ v
         P = P_pred - K @ S @ K.T
@@ -422,10 +422,10 @@ def kalman_filter_mcar_BM(Y, Q_QQ, Sigma, P_, Q_, QQ_hat, gamma):
     return m_filtered[-1]
 
 def worker(arg):
-    _data, test_data_, TICKERS, R_L, P_, Q_, forecast_step, C, gamma, i = arg
+    _data, test_data_, TICKERS, R_L, P_, Q_, forecast_step, C, gamma, p, i = arg
 
     np.random.seed(i)
-    A = nx.to_numpy_array(nx.erdos_renyi_graph(len(TICKERS), 0.4))
+    A = nx.to_numpy_array(nx.erdos_renyi_graph(len(TICKERS), p))
 
     # Derive network structure
     Adj = adj_to_line_graph(A, TICKERS)
@@ -696,37 +696,29 @@ def UAR_model(Y, test_set, test_size, forecast_step, lag=None, save=False):
             best_p[i] = min(aic_values, key=lambda x: x[1])[0]
 
     for i in range(test_size):
-        for j in range(K):
-            window_data = df_AR[j, i:T_train + i]
-            if lag is None:
+        if lag is None:
+            for j in range(K):
+                window_data = df_AR[j, i:T_train + i]
                 model = AutoReg(window_data, lags=best_p[j]).fit()
                 forecast_AR[i, j, :] = model.predict(start=len(window_data), end=len(window_data) + forecast_step - 1)
-            else:
+        else:
+            for j in range(K):
+                window_data = df_AR[j, i:T_train + i]
                 target = window_data[lag:]
-                X = np.empty((T_train - lag, lag + 1))
-                for k in range(T_train - lag):
-                    X[k, 0] = 1.0
-
-                for s in range(1, lag + 1):
-                    X[:, s] = window_data[lag - s:T_train - s]
+                X_lags = np.column_stack([window_data[lag - s:T_train - s] for s in range(1, lag + 1)])
+                X = np.column_stack([np.ones(T_train - lag), X_lags])
 
                 beta = np.linalg.solve(X.T @ X, X.T @ target)
 
-                # Recursive forecast using rolling lag buffer
-                recent = window_data[-lag:].copy()
                 preds = np.zeros(forecast_step)
+                recent = window_data[-lag:].copy()
 
                 for s in range(forecast_step):
-                    x = np.empty(lag + 1)
-                    x[0] = 1.0
-                    x[1:] = recent[::-1]
-
+                    x = np.concatenate(([1.0], recent[::-1]))
                     y_next = x @ beta
                     preds[s] = y_next
+                    recent = np.append(recent[1:], y_next)
 
-                    if lag > 1:
-                        recent[:-1] = recent[1:]
-                    recent[-1] = y_next
                 forecast_AR[i, j, :] = preds
 
     if save:
@@ -755,33 +747,22 @@ def VAR_model(Y, test_set, test_size, forecast_step, lag=None, save=False):
             model = VAR(window_data).fit(best_lag_var)
             forecast_VAR[i, :, :] = model.forecast(window_data[-model.k_ar:, :], steps=forecast_step).T
         else:
-            target = window_data[lag:, :]  # shape (T_train-p, K)
-            X = np.empty((T_train - lag, 1 + lag * K))
-            for k in range(T_train - lag):
-                X[k, 0] = 1.0
+            target = window_data[lag:, :]  # (T_train-lag, K)
 
-            for row in range(T_train - lag):
-                for s in range(1, lag + 1):
-                    for f in range(K):
-                        col = 1 + (s - 1) * K + f
-                        X[row, col] = window_data[lag - s + row, f]
+            X_lags = np.hstack([window_data[lag - s:T_train - s, :] for s in range(1, lag + 1)])
+            X = np.column_stack([np.ones(T_train - lag), X_lags])  # (T_train-lag, 1+lag*K)
 
-            B = np.linalg.solve(X.T @ X, X.T @ target)
+            B = np.linalg.solve(X.T @ X, X.T @ target)  # (1+lag*K, K)
 
             recent = window_data[-lag:, :].copy()
             preds = np.zeros((forecast_step, K))
 
             for s in range(forecast_step):
-                x = np.empty(1 + lag * K)
-                x[0] = 1.0
-                x[1:] = recent[::-1, :].reshape(-1)
-
+                x = np.concatenate(([1.0], recent[::-1, :].reshape(-1)))
                 y_next = x @ B
                 preds[s, :] = y_next
+                recent = np.vstack([recent[1:, :], y_next])
 
-                if lag > 1:
-                    recent[:-1, :] = recent[1:, :]
-                recent[-1, :] = y_next
             forecast_VAR[i, :, :] = preds.T
 
     if save:
@@ -816,14 +797,14 @@ def GNAR_model(Y, Adj, R_L, test_set, test_size, forecast_step, is_global = Fals
         n_params = p * K + n_neigh
 
     for i in range(test_size):
-        window_data = df_GNAR[i:Y.shape[1] + i, :]
-
-        Y_target = window_data[p:]
-        Y_vec = Y_target.reshape(-1)
+        window_data = df_GNAR[i:T_train + i, :]
+        Y_vec = window_data[p:, :].reshape(-1)
 
         # Preallocate design matrix
         D = np.zeros((n_rows * K, n_params))
-
+        row_idx = np.arange(n_rows * K).reshape(n_rows, K)
+        rows = row_idx.reshape(-1)
+        node_cols = np.tile(np.arange(K), n_rows)
         col_idx = 0
 
         for j in range(1, p + 1):
@@ -837,15 +818,12 @@ def GNAR_model(Y, Adj, R_L, test_set, test_size, forecast_step, is_global = Fals
             else:
                 # Node-specific own-lag coefficients
                 # For each node k, fill rows corresponding to node k
-                for k in range(K):
-                    for s in range(x_lag.shape[0]):
-                        D[k + s * K, col_idx + k] = x_lag[s, k]
+                D[rows, node_cols + col_idx] = x_lag.reshape(-1)
                 col_idx += K
 
             # Neighbor effects for this lag
             for r in range(R_L[j - 1]):
-                wx = x_lag @ W_C[r].T
-                D[:, col_idx] = wx.reshape(-1)
+                D[:, col_idx] = (x_lag @ W_C[r].T).reshape(-1)
                 col_idx += 1
 
         theta = np.linalg.solve(D.T @ D, D.T @ Y_vec)
@@ -861,21 +839,18 @@ def GNAR_model(Y, Adj, R_L, test_set, test_size, forecast_step, is_global = Fals
                 x_lag = hist[-j]
 
                 if is_global:
-                    alpha_j = theta[idx]
+                    x_next += theta[idx] * x_lag
                     idx += 1
-                    x_next += alpha_j * x_lag
                 else:
-                    alpha_j_vec = theta[idx:idx + K]
+                    x_next += theta[idx:idx + K] * x_lag
                     idx += K
-                    x_next += alpha_j_vec * x_lag
 
                 for r in range(R_L[j - 1]):
-                    beta_jr = theta[idx]
+                    x_next += theta[idx] * (W_C[r] @ x_lag)
                     idx += 1
-                    x_next += beta_jr * (W_C[r] @ x_lag)
 
             y_fc[s] = x_next
-            hist = np.vstack([hist, x_next])
+            hist = np.vstack((hist, x_next))
         forecast_GNAR[i, :, :] = y_fc.T
 
     if save:
@@ -937,10 +912,7 @@ def MCAR_edge_model(Y, test_set, test_size, forecast_step, P_, Q_, R_L, C, gamma
 
         # Precompute for speed-up
         eQ = scipy.linalg.expm(Q_Q)
-        try:
-            Q_inv = Q_QQ_inverse(Q_Q, K)
-        except:
-            Q_inv = np.linalg.pinv(Q_Q)
+        Q_inv = Q_QQ_inverse(Q_Q, K)
         eQt = scipy.linalg.fractional_matrix_power(eQ, P_[1] - P_[0]).real
 
         for n in range(forecast_step):
@@ -1007,10 +979,7 @@ def OU_edge_model(Y, test_set, test_size, forecast_step, R_L, C, P_, Q_, gamma, 
 
         # Precompute for speed-up
         eQ = scipy.linalg.expm(Q_Q)
-        try:
-            Q_inv = Q_QQ_inverse(Q_Q, K)
-        except:
-            Q_inv = np.linalg.pinv(Q_Q)
+        Q_inv = Q_QQ_inverse(Q_Q, K)
         eQt = scipy.linalg.fractional_matrix_power(eQ, P_[1] - P_[0]).real
 
         for n in range(forecast_step):
@@ -1096,10 +1065,7 @@ def grOU_edge_model(Y, Adj, test_set, test_size, forecast_step, R_L, C, P_, Q_, 
 
         # Precompute for speed-up
         eQ = scipy.linalg.expm(Q_Q)
-        try:
-            Q_inv = Q_QQ_inverse(Q_Q, K)
-        except:
-            Q_inv = np.linalg.pinv(Q_Q)
+        Q_inv = Q_QQ_inverse(Q_Q, K)
         eQt = scipy.linalg.fractional_matrix_power(eQ, P_[1] - P_[0]).real
 
         for n in range(forecast_step):
@@ -1131,13 +1097,13 @@ def is_better(candidate, incumbent, tol=1e-4):
         return True
     return False
 
-def find_best_network(_data, test_data_, TICKERS, RL, P_, Q_, forecast_step, C, gamma, n_candidates=100, tol=1e-4):
+def find_best_network(_data, test_data_, TICKERS, RL, P_, Q_, forecast_step, C, gamma, n_candidates=100, tol=1e-4, p=0.4):
     """
     Search candidate networks and return the best one under a fixed RL.
     """
     best_result = None
 
-    arg_list = [(_data, test_data_, TICKERS, RL, P_, Q_, forecast_step, C, gamma, i) for i in range(n_candidates)]
+    arg_list = [(_data, test_data_, TICKERS, RL, P_, Q_, forecast_step, C, gamma, p, i) for i in range(n_candidates)]
 
     with Pool(os.cpu_count()) as pool:
         for candidate in pool.imap_unordered(worker, arg_list):
