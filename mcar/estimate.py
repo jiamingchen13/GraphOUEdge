@@ -20,7 +20,8 @@ def state_space(Y: np.ndarray, p: int, P: np.ndarray) -> np.ndarray:
     return X
 
 def estimate_grOU_drift(Y: np.ndarray, A: np.ndarray, W_C: List, R_L: List, C: int, P: np.ndarray, Q: np.ndarray, b: np.ndarray,
-                         gamma: float, nu: np.ndarray = None, Sigma: np.ndarray = None, with_cov: bool = False, is_global: bool = False):
+                         gamma: float, nu: np.ndarray = None, Sigma: np.ndarray = None, with_cov: bool = False,
+                        is_global: bool = False):
     """
     Estimate grOU drift parameters from the realization of a grOU process with driving Levy triplet (b, Sigma, F).
     Here the Levy drift parameter b corresponds to no truncation t(x) = 0 when the process has finite jump activity, thus E[L_1] = b + \int_{R^d} z F(dz).
@@ -132,10 +133,7 @@ def estimate_grOU_drift(Y: np.ndarray, A: np.ndarray, W_C: List, R_L: List, C: i
             idx_k += C * R_L[k] + 1
 
         # Return theta_hat
-        try:
-            vec_theta_hat = np.linalg.solve(KK, K)
-        except:
-            vec_theta_hat = np.matmul(np.linalg.pinv(KK), K)
+        vec_theta_hat = np.linalg.solve(KK, K)
         vec_theta_hat_ext = np.zeros(p * d + sum(R_L) * C)
 
         idx_old = 0
@@ -205,13 +203,7 @@ def estimate_grOU_drift(Y: np.ndarray, A: np.ndarray, W_C: List, R_L: List, C: i
                                               np.multiply(W_C[e], A[s])), integral))
                 idx_l += C * R_L[l] + d
             idx_k += C * R_L[k] + d
-        try:
-            vec_theta_hat = np.linalg.solve(KK, K)
-        except:
-            try:
-                vec_theta_hat = np.matmul(np.linalg.pinv(KK), K)
-            except:
-                vec_theta_hat = np.full(p * d + sum(R_L) * C, np.inf)
+        vec_theta_hat = np.linalg.solve(KK, K)
             
     if with_cov and Sigma is not None:
         return vec_theta_hat, KK, K
@@ -221,7 +213,8 @@ def estimate_grOU_drift(Y: np.ndarray, A: np.ndarray, W_C: List, R_L: List, C: i
         return vec_theta_hat
 
 def estimate_OU_drift(Y: np.ndarray, R_L: List, C: int, P: np.ndarray, Q: np.ndarray, b: np.ndarray, gamma: float,
-                      nu: np.ndarray = None, Sigma: np.ndarray = None, with_cov: bool = False, is_global: bool = False):
+                      nu: np.ndarray = None, Sigma: np.ndarray = None, with_cov: bool = False, is_global: bool = False,
+                      lam = 1e-4):
     """
     Estimate OU drift parameters from the realization of a process with driving Levy triplet (b, Sigma, F). Here the Levy drift parameter b corresponds to
     no truncation t(x) = 0 when the process has finite jump activity, thus E[L_1] = b + \int_{R^d} z F(dz).
@@ -236,6 +229,7 @@ def estimate_OU_drift(Y: np.ndarray, R_L: List, C: int, P: np.ndarray, Q: np.nda
     :param Sigma: covariance matrix of the driving Levy process, (d, d) np.ndarray
     :param with_cov: whether to return the vectorized estimator with its estimated covariance, bool
     :param is_global: whether to return the global estimator, bool
+    :param lam: Regularization parameter, float
     :return if with_cov is True:
                 vec_theta_hat: vectorized estimated OU parameters
                 KK: estimated covariance of the estimated OU parameters
@@ -314,10 +308,7 @@ def estimate_OU_drift(Y: np.ndarray, R_L: List, C: int, P: np.ndarray, Q: np.nda
                 KK[k, l] = np.sum(np.multiply(Sigma_inv, integral))
 
         # Return theta_hat
-        try:
-            vec_theta_hat = np.repeat(np.linalg.solve(KK, K)[:, np.newaxis], d, axis=1)
-        except:
-            vec_theta_hat = np.repeat(np.matmul(np.linalg.pinv(KK), K)[:, np.newaxis], d, axis=1)
+        vec_theta_hat = np.repeat(np.linalg.solve(KK + lam * np.eye(KK.shape[0]), K)[:, np.newaxis], d, axis=1)
 
     else:
         # Build lag blocks:
@@ -354,10 +345,7 @@ def estimate_OU_drift(Y: np.ndarray, R_L: List, C: int, P: np.ndarray, Q: np.nda
 
                 KK[k * d:(k + 1) * d, l * d:(l + 1) * d] = Sigma_inv * integral_mat
 
-        try:
-            vec_theta_hat = np.linalg.solve(KK, K).reshape(p, d)
-        except:
-            vec_theta_hat = np.matmul(np.linalg.pinv(KK), K).reshape(p, d)
+        vec_theta_hat = np.linalg.solve(KK + lam * np.eye(KK.shape[0]), K).reshape(p, d)
 
     if with_cov and Sigma is not None:
         return vec_theta_hat, KK, K
@@ -449,10 +437,7 @@ def estimate_MCAR_drift(Y: np.ndarray, R_L: List, P: np.ndarray, Q: np.ndarray, 
     # Rearrange into 2D block matrix:
     KK = KK.transpose(0, 1, 4, 2, 3, 5).reshape(p * d * d, p * d * d)
 
-    try:
-        vec_QQ_hat = np.linalg.solve(KK, K)
-    except:
-        vec_QQ_hat = np.matmul(np.linalg.pinv(KK), K)
+    vec_QQ_hat = np.linalg.solve(KK, K)
 
     if with_cov and Sigma is not None:
         return vec_QQ_hat, KK, K
