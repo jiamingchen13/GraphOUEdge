@@ -469,7 +469,7 @@ def model_pred_single(args):
 
     sim_test_set = sliding_window_view(sim_test, (sim_Y.shape[0], forecast_step))[0]
     sim_test_size = sim_test_set.shape[0]
-    P_sim = np.array([i for i in range(sim_Y.shape[1])])
+    P_sim = np.array([i * ((sim_Y.shape[1] - 1) ** (-6 / 7)) for i in range(sim_Y.shape[1])])
     Q_sim = np.append(P_sim[::P_Q_ratio], P_sim[-1]) if (sim_Y.shape[1] - 1) % P_Q_ratio != 0 else P_sim[::P_Q_ratio]
 
     RMSE_row = np.zeros(7)
@@ -757,9 +757,10 @@ def VAR_model(Y, test_set, test_size, forecast_step, lag=None, save=False):
         else:
             target = window_data[lag:, :]  # shape (T_train-p, K)
             X = np.empty((T_train - lag, 1 + lag * K))
+            for k in range(T_train - lag):
+                X[k, 0] = 1.0
 
             for row in range(T_train - lag):
-                X[row, 0] = 1.0
                 for s in range(1, lag + 1):
                     for f in range(K):
                         col = 1 + (s - 1) * K + f
@@ -837,7 +838,8 @@ def GNAR_model(Y, Adj, R_L, test_set, test_size, forecast_step, is_global = Fals
                 # Node-specific own-lag coefficients
                 # For each node k, fill rows corresponding to node k
                 for k in range(K):
-                    D[k::K, col_idx + k] = x_lag[:, k]
+                    for s in range(x_lag.shape[0]):
+                        D[k + s * K, col_idx + k] = x_lag[s, k]
                 col_idx += K
 
             # Neighbor effects for this lag
