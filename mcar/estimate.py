@@ -59,20 +59,14 @@ def estimate_grOU_drift(Y: np.ndarray, A: np.ndarray, W_C: List, R_L: List, C: i
 
     if with_cov and Sigma is not None:
         # Compute inverse of Sigma
-        try:
-            Sigma_inv = np.linalg.solve(Sigma, np.eye(d))
-        except:
-            Sigma_inv = np.linalg.pinv(Sigma)
+        Sigma_inv = np.linalg.pinv(Sigma)
     elif with_cov and Sigma is None:
         # Estimate Sigma from data
         global_QQ_hat = estimate_grOU_drift(Y, A, W_C, R_L, C, P, Q, b, gamma, with_cov=False, is_global=is_global)
         QQ_hat = estimator_to_QQ(global_QQ_hat, R_L, C, W_C, A, d)
         DeltaL = recover_BDLP(Y, p, P, Q, QQ_hat)
         Sigma_hat = estimate_Sigma_L(DeltaL, Q, gamma)
-        try:
-            Sigma_inv = np.linalg.solve(Sigma_hat, np.eye(d))
-        except:
-            Sigma_inv = np.linalg.pinv(Sigma_hat)
+        Sigma_inv = np.linalg.pinv(Sigma_hat)
     else:
         # No need to use Sigma if cov is not needed
         Sigma_inv = np.eye(d)
@@ -277,10 +271,7 @@ def estimate_OU_drift(Y: np.ndarray, R_L: List, C: int, P: np.ndarray, Q: np.nda
 
     if with_cov and Sigma is not None:
         # Compute inverse of Sigma
-        try:
-            Sigma_inv = np.linalg.solve(Sigma, np.eye(d))
-        except:
-            Sigma_inv = np.linalg.pinv(Sigma)
+        Sigma_inv = np.linalg.pinv(Sigma)
     elif with_cov and Sigma is None:
         # Estimate Sigma from data
         theta_hat = estimate_OU_drift(Y, R_L, C, P, Q, b, gamma, with_cov=False, is_global=is_global)
@@ -289,10 +280,7 @@ def estimate_OU_drift(Y: np.ndarray, R_L: List, C: int, P: np.ndarray, Q: np.nda
         QQ_hat[:, idx, idx] = theta_hat
         DeltaL = recover_BDLP(Y, p, P, Q, QQ_hat)
         Sigma_hat = estimate_Sigma_L(DeltaL, Q, gamma)
-        try:
-            Sigma_inv = np.linalg.solve(Sigma_hat, np.eye(d))
-        except:
-            Sigma_inv = np.linalg.pinv(Sigma_hat)
+        Sigma_inv = np.linalg.pinv(Sigma_hat)
     else:
         # No need to use Sigma if cov is not needed
         Sigma_inv = np.eye(d)
@@ -427,19 +415,13 @@ def estimate_MCAR_drift(Y: np.ndarray, R_L: List, P: np.ndarray, Q: np.ndarray, 
 
     if with_cov and Sigma is not None:
         # Compute inverse of Sigma
-        try:
-            Sigma_inv = np.linalg.solve(Sigma, np.eye(d))
-        except:
-            Sigma_inv = np.linalg.pinv(Sigma)
+        Sigma_inv = np.linalg.pinv(Sigma)
     elif with_cov and Sigma is None:
         # Estimate Sigma from data
         QQ_hat = estimate_MCAR_drift(Y, R_L, P, Q, b, gamma, with_cov=False)
         DeltaL = recover_BDLP(Y, p, P, Q, QQ_hat)
         Sigma_hat = estimate_Sigma_L(DeltaL, Q, gamma)
-        try:
-            Sigma_inv = np.linalg.solve(Sigma_hat, np.eye(d))
-        except:
-            Sigma_inv = np.linalg.pinv(Sigma_hat)
+        Sigma_inv = np.linalg.pinv(Sigma_hat)
     else:
         # No need to use Sigma if cov is not needed
         Sigma_inv = np.eye(d)
@@ -637,16 +619,10 @@ def estimate_integral_Levy_measure(DeltaL: np.ndarray, Q: np.ndarray, gamma: flo
     N = len(DeltaQ)
 
     # Identify critical region x^T Sigma_inv x > beta*2*Delta*log(N)
-    try:
-        subset = np.logical_and(
-            np.einsum('ki,ki->i', np.linalg.solve(Sigma, DeltaL), DeltaL) > 2 * gamma * DeltaQ * np.log(N),
-            [K(DeltaL[:, i]) for i in range(DeltaL.shape[1])]
-        )
-    except:
-        subset = np.logical_and(
-            np.einsum('ki,ki->i', np.linalg.pinv(Sigma).dot(DeltaL), DeltaL) > 2 * gamma * DeltaQ * np.log(N),
-            [K(DeltaL[:, i]) for i in range(DeltaL.shape[1])]
-        )
+    subset = np.logical_and(
+        np.einsum('ki,ki->i', np.linalg.pinv(Sigma).dot(DeltaL), DeltaL) > 2 * gamma * DeltaQ * np.log(N),
+        [K(DeltaL[:, i]) for i in range(DeltaL.shape[1])]
+    )
     DeltaZ = DeltaL[:, subset]
     if DeltaZ.shape[1] < 1:
         f_hat = np.zeros(f(np.zeros(d)).shape) if isinstance(f(np.zeros(d)), np.ndarray) else 0
