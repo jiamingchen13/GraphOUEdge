@@ -696,22 +696,24 @@ def UAR_model(Y, test_set, test_size, forecast_step, lag=None, save=False):
             best_p[i] = min(aic_values, key=lambda x: x[1])[0]
 
     for i in range(test_size):
-        if lag is None:
-            for j in range(K):
-                window_data = df_AR[j, i:T_train + i]
+        for j in range(K):
+            window_data = df_AR[j, i:T_train + i]
+            if lag is None:
                 model = AutoReg(window_data, lags=best_p[j]).fit()
                 forecast_AR[i, j, :] = model.predict(start=len(window_data), end=len(window_data) + forecast_step - 1)
-        else:
-            for j in range(K):
-                window_data = df_AR[j, i:T_train + i]
+            else:
                 target = window_data[lag:]
-                X_lags = np.column_stack([window_data[lag - s:T_train - s] for s in range(1, lag + 1)])
-                X = np.column_stack([np.ones(T_train - lag), X_lags])
+                X = np.empty((T_train - lag, lag + 1))
+                X[:, 0] = 1
+
+                for s in range(1, lag + 1):
+                    X[:, s] = window_data[lag - s:T_train - s]
 
                 beta = np.linalg.solve(X.T @ X, X.T @ target)
 
-                preds = np.zeros(forecast_step)
+                # Recursive forecast using rolling lag buffer
                 recent = window_data[-lag:].copy()
+                preds = np.zeros(forecast_step)
 
                 for s in range(forecast_step):
                     x = np.concatenate(([1.0], recent[::-1]))
@@ -747,10 +749,13 @@ def VAR_model(Y, test_set, test_size, forecast_step, lag=None, save=False):
             model = VAR(window_data).fit(best_lag_var)
             forecast_VAR[i, :, :] = model.forecast(window_data[-model.k_ar:, :], steps=forecast_step).T
         else:
-            target = window_data[lag:, :]  # (T_train-lag, K)
+            target = window_data[lag:, :]  # shape (T_train-p, K)
+            X = np.empty((T_train - lag, 1 + lag * K))
+            X[:, 0] = 1
 
-            X_lags = np.hstack([window_data[lag - s:T_train - s, :] for s in range(1, lag + 1)])
-            X = np.column_stack([np.ones(T_train - lag), X_lags])  # (T_train-lag, 1+lag*K)
+            for row in range(T_train - lag):
+                for s in range(1, lag + 1):
+                    X[row, 1 + (s - 1) * K:1 + s * K] = window_data[lag - s + row, :]
 
             B = np.linalg.solve(X.T @ X, X.T @ target)  # (1+lag*K, K)
 
