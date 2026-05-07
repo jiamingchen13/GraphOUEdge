@@ -21,7 +21,7 @@ def state_space(Y: np.ndarray, p: int, P: np.ndarray) -> np.ndarray:
 
 def estimate_grOU_drift(Y: np.ndarray, A: np.ndarray, W_C: List, R_L: List, C: int, P: np.ndarray, Q: np.ndarray, b: np.ndarray,
                          gamma: float, nu: np.ndarray = None, Sigma: np.ndarray = None, with_cov: bool = False,
-                        is_global: bool = False):
+                        is_global: bool = False, lam: float = 1e-8):
     """
     Estimate grOU drift parameters from the realization of a grOU process with driving Levy triplet (b, Sigma, F).
     Here the Levy drift parameter b corresponds to no truncation t(x) = 0 when the process has finite jump activity, thus E[L_1] = b + \int_{R^d} z F(dz).
@@ -38,6 +38,7 @@ def estimate_grOU_drift(Y: np.ndarray, A: np.ndarray, W_C: List, R_L: List, C: i
     :param Sigma: Covariance matrix of the driving Levy process, (d, d) np.ndarray
     :param with_cov: whether to return the vectorized estimator with its estimated covariance, bool
     :param is_global: whether to return the global estimator, bool
+    :param lam: Regularization parameter, float
     :return if with_cov is True:
                 vec_theta_hat: vectorized estimated grCAR parameters, (p + sum(R_L) * C, ) np.ndarray
                 KK: estimated covariance of the estimated grCAR parameters, (p + sum(R_L) * C, p + sum(R_L) * C) np.ndarray
@@ -138,7 +139,10 @@ def estimate_grOU_drift(Y: np.ndarray, A: np.ndarray, W_C: List, R_L: List, C: i
             idx_k += C * R_L[k] + 1
 
         # Return theta_hat
-        vec_theta_hat = np.linalg.solve(KK, K)
+        try:
+            vec_theta_hat = np.linalg.solve(KK, K)
+        except:
+            vec_theta_hat = np.linalg.solve(KK + lam * np.eye(KK.shape[0]), K)
         vec_theta_hat_ext = np.zeros(p * d + sum(R_L) * C)
 
         idx_old = 0
@@ -214,7 +218,10 @@ def estimate_grOU_drift(Y: np.ndarray, A: np.ndarray, W_C: List, R_L: List, C: i
                                               np.multiply(W_C[e], A[s])), integral))
                 idx_l += C * R_L[l] + d
             idx_k += C * R_L[k] + d
-        vec_theta_hat = np.linalg.solve(KK, K)
+        try:
+            vec_theta_hat = np.linalg.solve(KK, K)
+        except:
+            vec_theta_hat = np.linalg.solve(KK + lam * np.eye(KK.shape[0]), K)
             
     if with_cov and Sigma is not None:
         return vec_theta_hat, KK, K
