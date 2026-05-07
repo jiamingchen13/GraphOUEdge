@@ -3,6 +3,7 @@ import glob
 import math
 import re
 import time
+import heapq
 import networkx as nx
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -423,9 +424,7 @@ def kalman_filter_mcar_BM(Y, Q_QQ, Sigma, P_, Q_, QQ_hat, gamma):
 
 def worker(arg):
     _data, test_data_, TICKERS, R_L, P_, Q_, forecast_step, C, gamma, p, i = arg
-
-    np.random.seed(i)
-    A = nx.to_numpy_array(nx.erdos_renyi_graph(len(TICKERS), p))
+    A = nx.to_numpy_array(nx.erdos_renyi_graph(len(TICKERS), p, seed = i))
 
     # Derive network structure
     Adj = adj_to_line_graph(A, TICKERS)
@@ -441,11 +440,12 @@ def worker(arg):
     test_set = sliding_window_view(test_Y, (K, forecast_step))[0]
     test_size = test_set.shape[0]
 
-    forecast_GNAR = GNAR_model(Y, Adj, R_L, test_set, test_size, forecast_step)
-    _, direction_acc_GNAR = evaluate_forecast(Y, forecast_GNAR, test_set)
+    forecast_AR = UAR_model(Y, test_set, test_size, forecast_step, lag=1)
+    _, direction_acc_AR = evaluate_forecast(Y, forecast_AR, test_set)
     forecast_grOU =  grOU_edge_model(Y, Adj, test_set, test_size, forecast_step, R_L, C, P_, Q_, gamma)
     _, direction_acc_grOU = evaluate_forecast(Y, forecast_grOU, test_set)
-    return direction_acc_grOU - direction_acc_GNAR, A, (direction_acc_grOU - direction_acc_GNAR)/direction_acc_GNAR
+    bic = grOU_edge_model(Y, Adj, test_set, test_size, forecast_step, R_L, C, P_, Q_, gamma, is_global=False, print_param=True, is_test=True)[2]
+    return direction_acc_grOU - direction_acc_AR, A, bic
 
 def process_one_sim(arg):
     P, R_L, K, C, Y, adj_L_sim, W_C_sim, gamma = arg
@@ -887,6 +887,9 @@ def MCAR_edge_model(Y, test_set, test_size, forecast_step, P_, Q_, R_L, C, gamma
     for i in range(test_size):
         window_data = df_MCAR[:, i:T_train + i]
         QQ_hat = estimate_MCAR_drift(Y, R_L, P_, Q_, b_MCAR, gamma, Sigma = Sigma_MCAR)
+        if np.all(np.abs(QQ_hat) < 1e-12):
+            forecast_MCAR[i, :, :] = np.repeat(window_data[:, -1][:, None], forecast_step, axis=1)
+            continue
         Q_Q = MCAR_Q(QQ_hat)
 
         if len(R_L) == 1:
@@ -916,9 +919,8 @@ def MCAR_edge_model(Y, test_set, test_size, forecast_step, P_, Q_, R_L, C, gamma
         X[:, 0] = x0
 
         # Precompute for speed-up
-        eQ = scipy.linalg.expm(Q_Q)
+        eQt = scipy.linalg.expm(Q_Q * (P_[1] - P_[0]))
         Q_inv = Q_QQ_inverse(Q_Q, K)
-        eQt = scipy.linalg.fractional_matrix_power(eQ, P_[1] - P_[0]).real
 
         for n in range(forecast_step):
             X[:, n + 1] = eQt.dot(X[:, n]) + (eQt - np.eye(K * len(R_L))).dot(Q_inv).dot(E).dot(b_MCAR)
@@ -950,6 +952,9 @@ def OU_edge_model(Y, test_set, test_size, forecast_step, R_L, C, P_, Q_, gamma, 
     for i in range(test_size):
         window_data = df_OU[:, i:T_train + i]
         theta_hat_OU, _, _ = estimate_OU_drift(window_data, R_L, C, P_, Q_, b_OU, gamma, None, Sigma_OU, with_cov=True, is_global=is_global)
+        if np.all(np.abs(theta_hat_OU) < 1e-12):
+            forecast_OU[i, :, :] = np.repeat(window_data[:, -1][:, None], forecast_step, axis=1)
+            continue
         X_OU.alpha_set(theta_hat_OU)
         X_OU.beta_set([[0] * stage * C for stage in R_L])
         Q_Q = X_OU.Q_matrix(False)
@@ -983,9 +988,8 @@ def OU_edge_model(Y, test_set, test_size, forecast_step, R_L, C, P_, Q_, gamma, 
         X[:, 0] = x0
 
         # Precompute for speed-up
-        eQ = scipy.linalg.expm(Q_Q)
+        eQt = scipy.linalg.expm(Q_Q * (P_[1] - P_[0]))
         Q_inv = Q_QQ_inverse(Q_Q, K)
-        eQt = scipy.linalg.fractional_matrix_power(eQ, P_[1] - P_[0]).real
 
         for n in range(forecast_step):
             X[:, n + 1] = eQt.dot(X[:, n]) + (eQt - np.eye(K * len(R_L))).dot(Q_inv).dot(E).dot(b_OU)
@@ -1071,9 +1075,8 @@ def grOU_edge_model(Y, Adj, test_set, test_size, forecast_step, R_L, C, P_, Q_, 
         X_[:, 0] = x0
 
         # Precompute for speed-up
-        eQ = scipy.linalg.expm(Q_Q)
+        eQt = scipy.linalg.expm(Q_Q * (P_[1] - P_[0]))
         Q_inv = Q_QQ_inverse(Q_Q, K)
-        eQt = scipy.linalg.fractional_matrix_power(eQ, P_[1] - P_[0]).real
 
         for n in range(forecast_step):
             X_[:, n + 1] = eQt.dot(X_[:, n]) + (eQt - np.eye(K * len(R_L))).dot(Q_inv).dot(E).dot(b)
@@ -1087,7 +1090,7 @@ def grOU_edge_model(Y, Adj, test_set, test_size, forecast_step, R_L, C, P_, Q_, 
     else:
        return forecast_grOU
 
-def is_better(candidate, incumbent, tol=1e-4):
+def is_better(candidate, incumbent, tol):
     """
     Compare two results of form:
     [rate_abs_diff, A, rate_rel_diff]
@@ -1104,27 +1107,49 @@ def is_better(candidate, incumbent, tol=1e-4):
         return True
     return False
 
-def find_best_network(_data, test_data_, TICKERS, RL, P_, Q_, forecast_step, C, gamma, n_candidates=100, tol=1e-4, p=0.4):
+def screen_candidate_networks(_data, test_data_, TICKERS, screening_RL, P_, Q_, forecast_step, C, gamma, n_candidates,
+    top_k, tol, p):
     """
-    Search candidate networks and return the best one under a fixed RL.
+    Step 1-4:
+    - Generate candidate networks
+    - Evaluate each network using a simple screening model
+    - Rank by out-of-sample performance
+    - Retain top_k networks
+    Returns:
+        screened_results: list of candidate results sorted best to worst
     """
-    best_result = None
-
-    arg_list = [(_data, test_data_, TICKERS, RL, P_, Q_, forecast_step, C, gamma, p, i) for i in range(n_candidates)]
-
+    arg_list = [(_data, test_data_, TICKERS, screening_RL, P_, Q_, forecast_step, C, gamma, p, i) for i in range(n_candidates)]
+    heap = []
     with Pool(os.cpu_count()) as pool:
         for candidate in pool.imap_unordered(worker, arg_list):
-            candidate = list(candidate)
-            if is_better(candidate, best_result, tol=tol):
-                best_result = candidate
+            key = (round(candidate[0] / tol), -candidate[2])
 
-    return best_result
+            if len(heap) < top_k:
+                heapq.heappush(heap, (key, candidate))
+            else:
+                # heap[0] is the worst among the current top_k
+                if key > heap[0][0]:
+                    heapq.heapreplace(heap, (key, candidate))
 
-def select_best_model_for_network(_data, test_data_, TICKERS, A, P_, Q_, forecast_step, C, gamma, max_order=5):
+    # Return best to worst
+    top_results = [item[1] for item in sorted(heap, key=lambda x: x[0], reverse=True)]
+    return top_results
+
+def evaluate_models_for_network(_data, test_data_, TICKERS, A, P_, Q_, forecast_step, C, gamma, max_order, tol):
     """
-    Given a network A, select the best RL via BIC.
+    For a fixed network A, search over candidate RL specifications
+    and return the best model for this network based on out-of-sample performance.
+
+    Returns:
+        best_model
+        best_result
+        all_model_results
+        Adj
     """
+    # Derive network structure
     Adj = adj_to_line_graph(A, TICKERS)
+
+    # Number of edges
     K = Adj[0].shape[0]
 
     # Training data
@@ -1135,96 +1160,89 @@ def select_best_model_for_network(_data, test_data_, TICKERS, A, P_, Q_, forecas
     test_set = sliding_window_view(test_Y, (K, forecast_step))[0]
     test_size = test_set.shape[0]
 
-    models = [[value] * length for length in range(1, max_order + 1) for value in (1, 2)]
+    candidate_models = [[value] * length for length in range(1, max_order + 1) for value in (1, 2)]
 
-    bic = [grOU_edge_model(Y, Adj, test_set, test_size, forecast_step, model, C, P_, Q_, gamma, is_global=False, print_param=True, is_test=True)[2] for model in models]
+    best_model = None
+    best_result = None
+    all_model_results = []
 
-    best_idx = min(range(len(bic)), key=bic.__getitem__)
-    best_model = models[best_idx]
-    best_bic = bic[best_idx]
+    for model in candidate_models:
+        forecast_AR = UAR_model(Y, test_set, test_size, forecast_step, lag=1)
+        _, direction_acc_AR = evaluate_forecast(Y, forecast_AR, test_set)
+        forecast_grOU = grOU_edge_model(Y, Adj, test_set, test_size, forecast_step, model, C, P_, Q_, gamma)
+        _, direction_acc_grOU = evaluate_forecast(Y, forecast_grOU, test_set)
+        bic = grOU_edge_model(Y, Adj, test_set, test_size, forecast_step, model, C, P_, Q_, gamma, is_global=False,
+                              print_param=True, is_test=True)[2]
+        result = [direction_acc_grOU - direction_acc_AR, bic]
+        all_model_results.append((model, result))
 
-    return best_model, best_bic, Adj
+        # Build a comparable object for is_better
+        comparable = [result[0], A, -result[1]]
 
-def iterative_grou_search_with_rollback(_data, test_data_, TICKERS, start_RL, P_, Q_, forecast_step, C, gamma, n_candidates=100, max_order=5, max_iter=20, tol=1e-4):
+        if is_better(comparable, best_result, tol=tol):
+            best_result = comparable
+            best_model = model
+
+    return best_model, best_result, all_model_results, Adj
+
+def joint_graph_model_selection(_data, test_data_, TICKERS, screening_RL, P_, Q_, forecast_step, C, gamma,
+                                n_candidates=100, top_k=5, max_order=3, tol=1e-4, p=0.4):
     """
-    Iterative search:
-    - search best network for current RL
-    - use BIC to propose new RL
-    - accept new RL only if it improves out-of-sample performance
-    - otherwise revert to previous RL and stop
+    Joint graph-model selection procedure:
+
+    1. Use a simple screening model (e.g. RL=[1]) to evaluate candidate networks
+    2. Retain top_k networks
+    3. For each retained network, select the best model
+    4. Compare resulting (G, M) pairs jointly using common out-of-sample performance
+    5. Return the best pair
     """
-    current_RL = start_RL.copy()
 
-    # Baseline result under starting RL
-    current_result = find_best_network(_data, test_data_, TICKERS, current_RL, P_, Q_, forecast_step, C, gamma, n_candidates=n_candidates, tol=tol)
-    current_A = current_result[1]
+    print("=== Step 1-4: Network screening ===")
+    screened_networks = screen_candidate_networks(_data, test_data_, TICKERS, screening_RL, P_, Q_, forecast_step, C,
+                                                  gamma, n_candidates, top_k, tol, p)
 
-    history = [{
-        "iteration": 0,
-        "RL": current_RL.copy(),
-        "result": current_result,
-        "accepted": True,
-        "note": "initial model"
-    }]
+    print(f"Retained {len(screened_networks)} networks after screening.")
 
-    print(f"Initial RL: {current_RL}")
-    print(f"Initial best result: {current_result}")
+    best_pair = None
+    best_summary = None
+    pair_summaries = []
 
-    for iteration in range(1, max_iter + 1):
-        print(f"\n===== Iteration {iteration} =====")
-        print(f"Current RL: {current_RL}")
+    print("\n=== Step 5: Model selection within each retained network ===")
+    for idx, screened_result in enumerate(screened_networks, start=1):
+        screen_score_abs, A, bic = screened_result
 
-        # Step 4: BIC proposes a new RL using current best network
-        proposed_RL, best_bic, Adj = select_best_model_for_network(_data, test_data_, TICKERS, current_A, P_, Q_, forecast_step, C, gamma, max_order=max_order)
+        print(f"\n--- Retained network {idx}/{len(screened_networks)} ---")
+        print(f"Screening performance: abs_diff={screen_score_abs}, bic={bic}")
 
-        print(f"BIC proposed RL: {proposed_RL}, BIC={best_bic}")
+        best_model, model_result, all_model_results, Adj = evaluate_models_for_network(_data, test_data_, TICKERS, A,
+                                                                    P_, Q_, forecast_step, C, gamma, max_order, tol)
 
-        # If BIC gives the same RL, stop
-        if proposed_RL == current_RL:
-            print("Stop: BIC selected the same RL.")
-            history.append({
-                "iteration": iteration,
-                "RL": current_RL.copy(),
-                "result": current_result,
-                "accepted": False,
-                "note": "BIC selected same RL; stop"
-            })
-            break
+        pair_summary = {
+            "network_rank": idx,
+            "network": A,
+            "screening_result": screened_result,
+            "best_model": best_model,
+            "final_result": model_result,
+            "all_model_results": all_model_results,
+            "edge_Adj": Adj
+        }
 
-        # Evaluate the proposed RL by re-running network search
-        proposed_result = find_best_network(_data, test_data_, TICKERS, proposed_RL, P_, Q_, forecast_step, C, gamma, n_candidates=n_candidates, tol=tol)
+        pair_summaries.append(pair_summary)
 
-        print(f"Proposed RL result: {proposed_result}")
-        print(f"Current RL result:  {current_result}")
+        if is_better(model_result, best_pair, tol=tol):
+            best_pair = model_result
+            best_summary = pair_summary
 
-        # Accept only if proposed RL improves performance
-        if is_better(proposed_result, current_result, tol=tol):
-            print("Accept new RL: out-of-sample performance improved.")
-            current_RL = proposed_RL
-            current_result = proposed_result
-            current_A = proposed_result[1]
-
-            history.append({
-                "iteration": iteration,
-                "RL": current_RL.copy(),
-                "result": current_result,
-                "accepted": True,
-                "note": "accepted BIC-proposed RL"
-            })
-        else:
-            print("Reject new RL: no improvement. Revert to previous RL and stop.")
-            history.append({
-                "iteration": iteration,
-                "RL": proposed_RL.copy() if isinstance(proposed_RL, list) else proposed_RL,
-                "result": proposed_result,
-                "accepted": False,
-                "note": "rejected; reverted to previous RL"
-            })
-            break
+    print("\n=== Final selection ===")
+    print(f"Selected model: {best_summary['best_model']}")
+    print(f"Selected final result: {best_summary['final_result']}")
 
     return {
-        "final_RL": current_RL,
-        "final_network": current_A,
-        "final_result": current_result,
-        "history": history,
+        "screening_RL": screening_RL,
+        "top_networks": screened_networks,
+        "all_pair_summaries": pair_summaries,
+        "final_network": best_summary["network"],
+        "final_model": best_summary["best_model"],
+        "final_result": best_summary["final_result"],
+        "final_adj": best_summary["edge_Adj"],
     }
