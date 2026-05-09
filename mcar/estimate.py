@@ -525,7 +525,12 @@ def disentangle_BM(DeltaL: np.ndarray, Q: np.ndarray, Sigma: np.ndarray, gamma: 
     DeltaQ = np.diff(Q)
     N = len(DeltaQ)
     DeltaX = DeltaL
-    subset = np.einsum('ki,ki->i', DeltaX, np.linalg.pinv(Sigma).dot(DeltaX)) <= 2 * gamma * DeltaQ * np.log(N)
+    try:
+        subset = np.einsum('ki,ki->i', DeltaX, np.linalg.pinv(Sigma).dot(DeltaX)) <= 2 * gamma * DeltaQ * np.log(N)
+    except np.linalg.LinAlgError:
+        eps = 1e-6
+        Sigma_reg = Sigma + eps * np.eye(Sigma.shape[0])
+        subset = np.einsum('ki,ki->i', DeltaX, np.linalg.pinv(Sigma_reg).dot(DeltaX)) <= 2 * gamma * DeltaQ * np.log(N)
     # Return Brownian increments
     DeltaQ_W = DeltaQ[subset]
     DeltaW = DeltaX[:, subset]

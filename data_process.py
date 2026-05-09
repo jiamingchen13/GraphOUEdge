@@ -364,68 +364,11 @@ def adj_to_line_graph(adj, TICKERS):
     np.fill_diagonal(B, 0)
     return [B, edges_]
 
-def kalman_filter_mcar_BM(Y, Q_QQ, Sigma, P_, Q_, QQ_hat, gamma):
-    """
-    Y: (d, N+1) observations at time grid
-    Q_QQ: (pd, pd) MCAR matrix
-    Sigma: (d, d) Brownian covariance of Levy process
-    P_: (N+1, ) observation times
-    Q_: (M+1, ) coarser grid
-    QQ_hat: estimated MCAR parameters, list of p (d, d) np.ndarray
-    gamma: hyperparameter for defining the critical region
-    Returns the last value of m_filtered, (pd, ) np.ndarray
-    """
-    d = Y.shape[0]
-    pd = Q_QQ.shape[0]
-    p = int(pd / d)
-
-    DeltaL_Q = recover_BDLP(Y, p, P_, Q_, QQ_hat)
-    DeltaW, DeltaQ_W = disentangle_BM(DeltaL_Q, Q_, Sigma, gamma)
-    Q_index = np.searchsorted(Q_, np.cumsum(DeltaQ_W), side="left")
-    Y_Q = Y[:, Q_index]
-
-    # Build Sigma_tilde = E Sigma E^T, with E[-d:,:] = I_d
-    E = np.zeros((pd, d))
-    E[-d:, :] = np.eye(d)
-    Sigma_tilde = E @ Sigma @ E.T
-
-    M = np.zeros((2 * pd, 2 * pd))
-    M[:pd, :pd] = Q_QQ
-    M[:pd, pd:] = Sigma_tilde
-    M[pd:, pd:] = -Q_QQ.T
-    H = np.zeros((d, pd))
-    H[:, :d] = np.eye(d)
-
-    # Initial prior
-    m = np.zeros(pd)
-    P = np.eye(pd)
-    m_filtered = [m.copy()]
-
-    for k in range(len(DeltaQ_W)):
-        expM = scipy.linalg.expm(M * DeltaQ_W[k])
-        F_k = scipy.linalg.expm(Q_QQ * DeltaQ_W[k])
-        Q_k = expM[:pd, pd:] @ F_k.T
-
-        # 1) Prediction
-        m_pred = F_k @ m
-        P_pred = F_k @ P @ F_k.T + Q_k
-
-        # 2) Update
-        v = Y_Q[:, k] - H @ m_pred
-        S = H @ P_pred @ H.T
-        K = np.linalg.solve(S, H @ P_pred).T
-
-        m = m_pred + K @ v
-        P = P_pred - K @ S @ K.T
-
-        m_filtered.append(m.copy())
-
-    return m_filtered[-1]
-
 def worker(arg):
     _data, test_data_, TICKERS, R_L, P_, Q_, forecast_step, C, gamma, p, i = arg
     A = nx.to_numpy_array(nx.erdos_renyi_graph(len(TICKERS), p, seed = i))
-
+    if np.all(A == 0):
+        return None
     # Derive network structure
     Adj = adj_to_line_graph(A, TICKERS)
 
@@ -440,12 +383,10 @@ def worker(arg):
     test_set = sliding_window_view(test_Y, (K, forecast_step))[0]
     test_size = test_set.shape[0]
 
-    forecast_AR = UAR_model(Y, test_set, test_size, forecast_step, lag=1)
-    _, direction_acc_AR = evaluate_forecast(Y, forecast_AR, test_set)
     forecast_grOU =  grOU_edge_model(Y, Adj, test_set, test_size, forecast_step, R_L, C, P_, Q_, gamma)
     _, direction_acc_grOU = evaluate_forecast(Y, forecast_grOU, test_set)
     bic = grOU_edge_model(Y, Adj, test_set, test_size, forecast_step, R_L, C, P_, Q_, gamma, is_global=False, print_param=True, is_test=True)[2]
-    return direction_acc_grOU - direction_acc_AR, A, bic
+    return direction_acc_grOU, A, bic
 
 def process_one_sim(arg):
     P, R_L, K, C, Y, adj_L_sim, W_C_sim, gamma = arg
@@ -539,6 +480,7 @@ def model_pred(data, test_size, adj_sim, forecast_step, P_Q_ratio, gamma, label,
         np.save(f, comp_time)
 
 def boxplot_(sim, scenario):
+    plt.ylim([-6, 6])
     plt.plot(sim[0, :, :].T)
     plt.tick_params(axis='both', labelsize=20)
     plt.savefig('./data/LOBSTERdata/output/sim/' + scenario + '/sample_path.eps', bbox_inches='tight', format='eps')
@@ -891,23 +833,7 @@ def MCAR_edge_model(Y, test_set, test_size, forecast_step, P_, Q_, R_L, C, gamma
             forecast_MCAR[i, :, :] = np.repeat(window_data[:, -1][:, None], forecast_step, axis=1)
             continue
         Q_Q = MCAR_Q(QQ_hat)
-
-        if len(R_L) == 1:
-            x0 = window_data[:, -1]
-        else:
-            if method == 'backward':
-                # Backward - differences
-                flip_window = state_space(np.flip(window_data[:, -len(R_L):], axis=1), len(R_L), P_[-len(R_L):])
-                x0 = flip_window[:, 0] * np.repeat((-1) ** np.arange(len(R_L)), flip_window.shape[0] / len(R_L))
-            elif method == 'naive':
-                # Naive initialization
-                x0 =np.append(window_data[:, -1], [0] * K * (len(R_L) - 1))
-            elif method == 'kalman':
-                # Kalman - filter
-                x0 = kalman_filter_mcar_BM(window_data, Q_Q, Sigma_MCAR, P_, Q_, QQ_hat, gamma)
-                x0[:K] = window_data[:, -1]
-            else:
-                raise NotImplementedError("method must be among 'backward', 'naive' or 'kalman'.")
+        x0 = np.append(window_data[:, -1], [0] * K * (len(R_L) - 1))
 
         # Make prediction
         # Compute noise coefficient E, Sigma_tilde
@@ -959,24 +885,7 @@ def OU_edge_model(Y, test_set, test_size, forecast_step, R_L, C, P_, Q_, gamma, 
         X_OU.beta_set([[0] * stage * C for stage in R_L])
         Q_Q = X_OU.Q_matrix(False)
         alphas_OU.append(theta_hat_OU)
-
-        if len(R_L) == 1:
-            x0 = window_data[:, -1]
-        else:
-            if method == 'backward':
-                # Backward - differences
-                flip_window = state_space(np.flip(window_data[:, -len(R_L):], axis=1), len(R_L), P_[-len(R_L):])
-                x0 = flip_window[:, 0] * np.repeat((-1) ** np.arange(len(R_L)), flip_window.shape[0] / len(R_L))
-            elif method == 'naive':
-                # Naive initialization
-                x0 =np.append(window_data[:, -1], [0] * K * (len(R_L) - 1))
-            elif method == 'kalman':
-                # Kalman - filter
-                QQ_hat = [np.diag([x] * K) for x in theta_hat_OU]
-                x0 = kalman_filter_mcar_BM(window_data, Q_Q, Sigma_OU, P_, Q_, QQ_hat, gamma)
-                x0[:K] = window_data[:, -1]
-            else:
-                raise NotImplementedError("method must be among 'backward', 'naive' or 'kalman'.")
+        x0 = np.append(window_data[:, -1], [0] * K * (len(R_L) - 1))
 
         # Make prediction
         # Compute noise coefficient E, Sigma_tilde
@@ -1047,23 +956,7 @@ def grOU_edge_model(Y, Adj, test_set, test_size, forecast_step, R_L, C, P_, Q_, 
             alphas.append(alpha_pred)
             betas.append(beta_pred)
 
-        if len(R_L) == 1:
-            x0 = window_data[:, -1]
-        else:
-            if method == 'backward':
-                # Backward - differences
-                flip_window = state_space(np.flip(window_data[:, -len(R_L):], axis=1), len(R_L), P_[-len(R_L):])
-                x0 = flip_window[:, 0] * np.repeat((-1) ** np.arange(len(R_L)), flip_window.shape[0] / len(R_L))
-            elif method == 'naive':
-                # Naive initialization
-                x0 =np.append(window_data[:, -1], [0] * K * (len(R_L) - 1))
-            elif method == 'kalman':
-                # Kalman - filter
-                QQ_hat = estimator_to_QQ(theta_hat, R_L, C, W_C, Adj_L, K)
-                x0 = kalman_filter_mcar_BM(window_data, Q_Q, Sigma, P_, Q_, QQ_hat, gamma)
-                x0[:K] = window_data[:, -1]
-            else:
-                raise NotImplementedError("method must be among 'backward', 'naive' or 'kalman'.")
+        x0 = np.append(window_data[:, -1], [0] * K * (len(R_L) - 1))
 
         # Make prediction
         # Compute noise coefficient E, Sigma_tilde
@@ -1093,17 +986,17 @@ def grOU_edge_model(Y, Adj, test_set, test_size, forecast_step, R_L, C, P_, Q_, 
 def is_better(candidate, incumbent, tol):
     """
     Compare two results of form:
-    [rate_abs_diff, A, rate_rel_diff]
+    [rate, A, bic]
     """
     if incumbent is None:
         return True
 
-    cand_abs, _, cand_rel = candidate
-    inc_abs, _, inc_rel = incumbent
+    cand, _, cand_bic = candidate
+    inc, _, inc_bic = incumbent
 
-    if cand_abs > inc_abs + tol:
+    if cand > inc + tol:
         return True
-    elif abs(cand_abs - inc_abs) <= tol and cand_rel > inc_rel:
+    elif abs(cand - inc) <= tol and cand_bic < inc_bic:
         return True
     return False
 
@@ -1121,18 +1014,20 @@ def screen_candidate_networks(_data, test_data_, TICKERS, screening_RL, P_, Q_, 
     arg_list = [(_data, test_data_, TICKERS, screening_RL, P_, Q_, forecast_step, C, gamma, p, i) for i in range(n_candidates)]
     heap = []
     with Pool(os.cpu_count()) as pool:
-        for candidate in pool.imap_unordered(worker, arg_list):
-            key = (round(candidate[0] / tol), -candidate[2])
+        for idx, candidate in enumerate(pool.imap_unordered(worker, arg_list)):
+            if candidate is None:
+                continue
+            key = (round(candidate[0] / tol), -int(candidate[2]))
 
             if len(heap) < top_k:
-                heapq.heappush(heap, (key, candidate))
+                heapq.heappush(heap, (key, idx, candidate))
             else:
                 # heap[0] is the worst among the current top_k
                 if key > heap[0][0]:
-                    heapq.heapreplace(heap, (key, candidate))
+                    heapq.heapreplace(heap, (key, idx, candidate))
 
     # Return best to worst
-    top_results = [item[1] for item in sorted(heap, key=lambda x: x[0], reverse=True)]
+    top_results = [item[2] for item in sorted(heap, key=lambda x: x[0], reverse=True)]
     return top_results
 
 def evaluate_models_for_network(_data, test_data_, TICKERS, A, P_, Q_, forecast_step, C, gamma, max_order, tol):
@@ -1164,29 +1059,25 @@ def evaluate_models_for_network(_data, test_data_, TICKERS, A, P_, Q_, forecast_
 
     best_model = None
     best_result = None
-    all_model_results = []
 
     for model in candidate_models:
-        forecast_AR = UAR_model(Y, test_set, test_size, forecast_step, lag=1)
-        _, direction_acc_AR = evaluate_forecast(Y, forecast_AR, test_set)
         forecast_grOU = grOU_edge_model(Y, Adj, test_set, test_size, forecast_step, model, C, P_, Q_, gamma)
         _, direction_acc_grOU = evaluate_forecast(Y, forecast_grOU, test_set)
         bic = grOU_edge_model(Y, Adj, test_set, test_size, forecast_step, model, C, P_, Q_, gamma, is_global=False,
                               print_param=True, is_test=True)[2]
-        result = [direction_acc_grOU - direction_acc_AR, bic]
-        all_model_results.append((model, result))
+        result = [direction_acc_grOU, bic]
 
         # Build a comparable object for is_better
-        comparable = [result[0], A, -result[1]]
+        comparable = [result[0], A, result[1]]
 
         if is_better(comparable, best_result, tol=tol):
             best_result = comparable
             best_model = model
 
-    return best_model, best_result, all_model_results, Adj
+    return best_model, best_result
 
 def joint_graph_model_selection(_data, test_data_, TICKERS, screening_RL, P_, Q_, forecast_step, C, gamma,
-                                n_candidates=100, top_k=5, max_order=3, tol=1e-4, p=0.4):
+                                n_candidates=1000, top_k=50, max_order=3, tol=1e-2, p=0.4):
     """
     Joint graph-model selection procedure:
 
@@ -1201,30 +1092,21 @@ def joint_graph_model_selection(_data, test_data_, TICKERS, screening_RL, P_, Q_
     screened_networks = screen_candidate_networks(_data, test_data_, TICKERS, screening_RL, P_, Q_, forecast_step, C,
                                                   gamma, n_candidates, top_k, tol, p)
 
-    print(f"Retained {len(screened_networks)} networks after screening.")
-
     best_pair = None
     best_summary = None
     pair_summaries = []
 
     print("\n=== Step 5: Model selection within each retained network ===")
     for idx, screened_result in enumerate(screened_networks, start=1):
-        screen_score_abs, A, bic = screened_result
-
-        print(f"\n--- Retained network {idx}/{len(screened_networks)} ---")
-        print(f"Screening performance: abs_diff={screen_score_abs}, bic={bic}")
-
-        best_model, model_result, all_model_results, Adj = evaluate_models_for_network(_data, test_data_, TICKERS, A,
+        _, A, bic = screened_result
+        best_model, model_result = evaluate_models_for_network(_data, test_data_, TICKERS, A,
                                                                     P_, Q_, forecast_step, C, gamma, max_order, tol)
 
         pair_summary = {
             "network_rank": idx,
             "network": A,
-            "screening_result": screened_result,
             "best_model": best_model,
             "final_result": model_result,
-            "all_model_results": all_model_results,
-            "edge_Adj": Adj
         }
 
         pair_summaries.append(pair_summary)
@@ -1239,10 +1121,7 @@ def joint_graph_model_selection(_data, test_data_, TICKERS, screening_RL, P_, Q_
 
     return {
         "screening_RL": screening_RL,
-        "top_networks": screened_networks,
         "all_pair_summaries": pair_summaries,
-        "final_network": best_summary["network"],
-        "final_model": best_summary["best_model"],
-        "final_result": best_summary["final_result"],
-        "final_adj": best_summary["edge_Adj"],
+        "Selected model": best_summary['best_model'],
+        "Selected final result": best_summary['final_result']
     }
