@@ -4,3 +4,4 @@ data
 __pycache__
 mcar/__pycache__
 .idea
+legacy.ipynb
