@@ -7,5 +7,6 @@ This repository contains code for simulating and estimating graph Ornstein-Uhlen
 The main methods are located in `mcar.simulate.py`, `mcar.estimate.py`, `graphOUedge.py` and `data_process.py`. Examples of their usage can be found in `grOU-simulation-study.ipynb`. Specifically:
 
 - `grOU-simulation-study.ipynb`: Contains code for a simulation study to evaluate the finite-sample empirical properties of the estimators and an empirical application to high-frequency limit order book data from the [LOBSTER](https://lobsterdata.com/) database.
+- `data/LOBSTERdata/output`: This directory contains all precomputed results and generated figures.
 
 The authors would like to acknowledge Claude Sonnet 4.6 for its assistance in polishing and restructuring the comments in those code files.
