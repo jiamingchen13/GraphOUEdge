@@ -392,7 +392,7 @@ def estimate_grOU_drift(Y: np.ndarray, A: np.ndarray, W_C: List, R_L: List, C: i
 
 def estimate_OU_drift(Y: np.ndarray, R_L: List, C: int, P: np.ndarray, Q: np.ndarray, b: np.ndarray, gamma: float,
                       nu: np.ndarray = None, Sigma: np.ndarray = None, with_cov: bool = False, is_global: bool = False,
-                      lam = 1e-8):
+                      lam: float = 1e-8):
     """
     Estimate OU drift parameters from the realization of a process with driving Levy triplet (b, Sigma, F).
 
@@ -564,7 +564,7 @@ def estimate_OU_drift(Y: np.ndarray, R_L: List, C: int, P: np.ndarray, Q: np.nda
 # ============================================================
 
 def estimate_MCAR_drift(Y: np.ndarray, R_L: List, P: np.ndarray, Q: np.ndarray, b: np.ndarray, gamma: float, nu: np.ndarray = None,
-                        with_cov: bool = False, Sigma: np.ndarray = None):
+                        with_cov: bool = False, Sigma: np.ndarray = None, lam: float = 1e-8):
     """
     Estimate MCAR drift parameters from the realisation of a MCAR process with driving Levy triplet (b, Sigma, F).
 
@@ -586,6 +586,7 @@ def estimate_MCAR_drift(Y: np.ndarray, R_L: List, P: np.ndarray, Q: np.ndarray, 
     :param with_cov: If True, return the estimated covariance matrix [K], bool
     :param Sigma:    Covariance matrix of the driving Levy process; if None and with_cov=True,
                      estimated from data, (d, d) np.ndarray
+    :param lam:      Ridge regularization parameter, float
     :return:
         if with_cov is True and Sigma is not None:
             vec_QQ_hat: vectorized estimated MCAR parameters, (p*d², ) np.ndarray
@@ -667,8 +668,8 @@ def estimate_MCAR_drift(Y: np.ndarray, R_L: List, P: np.ndarray, Q: np.ndarray, 
                     KK[k * d ** 2 + i * d:k * d ** 2 + (i + 1) * d, l * d ** 2 + j * d:l * d ** 2 + (
                             j + 1) * d] = Sigma_inv * integral
 
-    # Solve the linear system (no ridge here; KK should be invertible for MCAR)
-    vec_QQ_hat = np.linalg.solve(KK, K)
+    # Solve the regularized linear system
+    vec_QQ_hat = np.linalg.solve(KK + lam * np.eye(KK.shape[0]), K)
 
     # ---- Return results ----
     if with_cov and Sigma is not None:

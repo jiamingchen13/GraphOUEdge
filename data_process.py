@@ -1071,7 +1071,7 @@ def MCAR_edge_model(Y, test_set, test_size, forecast_step, P_, Q_, R_L, C, gamma
         window_data = df_MCAR[:, i:T_train + i]
 
         # Estimate MCAR drift matrices for this window
-        QQ_hat = estimate_MCAR_drift(Y, R_L, P_, Q_, b_MCAR, gamma, Sigma=Sigma_MCAR)
+        QQ_hat = estimate_MCAR_drift(window_data, R_L, P_, Q_, b_MCAR, gamma, Sigma=Sigma_MCAR)
 
         # Fall back to naive forecast if drift is numerically zero
         if np.all(np.abs(QQ_hat) < 1e-12):
