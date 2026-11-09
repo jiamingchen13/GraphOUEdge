@@ -1836,6 +1836,7 @@ def boxplot_(sim, scenario):
         ax[2].set_ylabel('Computational Time', fontsize=16)
         ax[2].tick_params(axis='both', labelsize=14)
 
+        plt.tight_layout()
         plt.show()
         fig.savefig('./data/LOBSTERdata/output/sim/' + scenario + '/boxplot_' + label + '.eps', bbox_inches='tight',
                     format='eps')
@@ -1885,5 +1886,6 @@ def boxplot_(sim, scenario):
     ax[1].set_xticklabels(['correct', 'missing_5', 'missing_1'])
     ax[1].set_ylabel('Directional accuracy', fontsize=16)
 
+    plt.tight_layout()
     plt.show()
     fig.savefig('./data/LOBSTERdata/output/sim/' + scenario + '/boxplot_grOU.eps', bbox_inches='tight', format='eps')
