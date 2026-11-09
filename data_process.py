@@ -1708,6 +1708,9 @@ def model_pred(data, test_size, adj_sim, forecast_step, P_Q_ratio, gamma, label,
     :return:              None. Saves 'rmse_{label}.npy', 'dir_{label}.npy',
                           'time_{label}.npy' to the scenario output directory.
     """
+    # Create directory and does nothing if already exists
+    os.makedirs('./data/LOBSTERdata/output/sim/' + scenario, exist_ok=True)
+
     # Apply network misspecification: remove one edge from the data
     if label == 'missing_5':
         data = data[:, 1:, :]   # Remove first edge (α=5, dominant)
