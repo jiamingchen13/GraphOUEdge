@@ -340,13 +340,15 @@ class GraphOUEdge:
             x0 = simulate_MCAR_stat_distr_compound_poisson(self.Q_Q, self.b, self.Sigma, 0, self.jump_F)
             # Simulate exact path using matrix exponentials
             path = simulate_MCAR_compound_poisson(np.linspace(0, self.T, self.N + 1), self.Q_Q, x0, self.b, self.Sigma, 0, self.jump_F, uniform=True)
+            jump_times = np.array([])
 
         elif regime == 'CP':
             # Compound Poisson jumps: rate > 0, Gaussian jump sizes N(0, scale*I_K)
             # Sample stationary initial condition exactly
             x0 = simulate_MCAR_stat_distr_compound_poisson(self.Q_Q, self.b, self.Sigma, rate, self.jump_F)
-            # Simulate exact path using matrix exponentials
-            path = simulate_MCAR_compound_poisson(np.linspace(0, self.T, self.N + 1), self.Q_Q, x0, self.b, self.Sigma, rate, self.jump_F, uniform=True)
+            # Simulate exact path using matrix exponentials; also recover true jump times
+            path, jump_times, _ = simulate_MCAR_compound_poisson(np.linspace(0, self.T, self.N + 1), self.Q_Q, x0, self.b, self.Sigma, rate, self.jump_F, output_format='SS + jumps', uniform=True)
+            path = path[:self.K, :]     # 'SS + jumps' returns full state X; keep only observed Y = first K rows
 
         elif regime == 'Gamma':
             # Symmetric Gamma noise (infinite activity Lévy process)
@@ -354,11 +356,12 @@ class GraphOUEdge:
             x0 = simulate_MCAR_stat_distr_approx(self.Q_Q, self.b, self.Sigma, self.jumps)
             # Simulate path using Euler-Maruyama approximation
             path = simulate_MCAR_approx(np.linspace(0, self.T, self.N + 1), self.Q_Q, x0, self.b, self.Sigma, self.jumps, uniform=True)
+            jump_times = np.array([])
 
         else:
             print("Regime must be 'BM', 'CP' or 'Gamma'.")
             return None
-        return sample_idx, path
+        return sample_idx, path, jump_times
 
     # ============================================================
     # PARALLEL MONTE CARLO SIMULATION
@@ -397,6 +400,7 @@ class GraphOUEdge:
 
         # Pre-allocate output array: (n_samples, K, N+1)
         MCAR = np.zeros((n_samples, self.K, self.N + 1))
+        jump_times_all = [None] * n_samples
 
         # Default to using all available CPU cores
         if n_jobs is None:
@@ -409,8 +413,9 @@ class GraphOUEdge:
         # Launch parallel simulation pool
         # imap with chunksize=10 balances overhead vs. granularity for large n_samples
         with Pool(processes = n_jobs) as pool:
-            for sample_idx, path in pool.imap(self._simulate_one, args_list, chunksize=10):
+            for sample_idx, path, jump_times in pool.imap(self._simulate_one, args_list, chunksize=10):
                 # Store each completed path in the pre-allocated output array
                 MCAR[sample_idx, :, :] = path
+                jump_times_all[sample_idx] = jump_times
 
-        return MCAR
+        return MCAR, jump_times_all
