@@ -174,7 +174,7 @@ def Q_QQ_inverse(Q_QQ: np.ndarray, K: int) -> np.ndarray:
         Q^{-1} = [-Q_p^{-1}Q_{p-1}, ..., -Q_p^{-1}Q_1, -Q_p^{-1}]
                  [I,   0,   ...   0,   0                           ]
                  [0,   I,   ...   0,   0                           ]
-                 [.    .    ...   .    .                            ]
+                 [.    .    ...   .    .                           ]
                  [0,   0,   ...   I,   0                           ]
 
     The first block row is computed by solving Q_p X = -Q_j for each j,

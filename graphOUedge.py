@@ -367,7 +367,7 @@ class GraphOUEdge:
     # PARALLEL MONTE CARLO SIMULATION
     # ============================================================
 
-    def simulate(self, regime: str, n_samples: int, seed: int, rate: float = 0, n_jobs: int = None):
+    def simulate(self, regime: str, n_samples: int, seed: int, rate: float = 0, n_jobs: int = None, show_jump: bool = False):
         """
         Simulate n_samples independent MCAR paths in parallel using multiprocessing.
 
@@ -389,6 +389,7 @@ class GraphOUEdge:
         :param seed:      Base random seed; worker i uses seed + i for reproducibility, int
         :param rate:      Poisson jump arrival rate (used only for 'CP' regime), float
         :param n_jobs:    Number of parallel worker processes; defaults to cpu_count(), int
+        :param show_jump: If True, output jump time
         :return MCAR:     Simulated paths array, shape (n_samples, K, N+1) np.ndarray,
                           where MCAR[i, :, :] is the i-th simulated path of Y_t ∈ R^K.
                           Returns None if Q_matrix() has not been called.
@@ -418,4 +419,7 @@ class GraphOUEdge:
                 MCAR[sample_idx, :, :] = path
                 jump_times_all[sample_idx] = jump_times
 
-        return MCAR, jump_times_all
+        if show_jump:
+            return MCAR, jump_times_all
+        else:
+            return MCAR

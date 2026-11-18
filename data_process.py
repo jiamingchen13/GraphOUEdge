@@ -1107,7 +1107,7 @@ def MCAR_edge_model(Y, test_set, test_size, forecast_step, P_, Q_, R_L, C, gamma
     return forecast_MCAR
 
 def grOU_edge_model(Y, Adj, test_set, test_size, forecast_step, R_L, C, P_, Q_, gamma, method = 'naive',
-                    is_global=False, print_param=False, is_test=False, save=False):
+                    is_global=False, print_param=False, is_test=False, save=False, show_jump=False):
     """
     Graph OU (grOU) edge model: forecast using the network-structured OU model.
 
@@ -1135,6 +1135,7 @@ def grOU_edge_model(Y, Adj, test_set, test_size, forecast_step, R_L, C, P_, Q_, 
     :param print_param:   If True, return (alphas, betas, BIC) instead of forecasts, bool
     :param is_test:       If True, only evaluate the first test window (for BIC), bool
     :param save:          If True, save forecast array to disk, bool
+    :param show_jump:     If True, output classified Brownian mask
     :return:              If print_param=False: forecast array, shape (test_size, K, forecast_step)
                           If print_param=True:  Tuple (alphas, betas, BIC)
     """
@@ -1148,7 +1149,10 @@ def grOU_edge_model(Y, Adj, test_set, test_size, forecast_step, R_L, C, P_, Q_, 
     X = GraphOUEdge(R_L, K, C, Adj_L, W_C, gamma, 'data\\LOBSTERdata\\output\\train\\aggregate')
 
     # Estimate Lévy triplet (b, Σ) using full iterative procedure
-    _, (b, Sigma) = estimate_MCAR('grOU', Y, P_, Q_, Adj_L, W_C, R_L, C, gamma, is_global=is_global)
+    QQ_hat_full, (b, Sigma) = estimate_MCAR('grOU', Y, P_, Q_, Adj_L, W_C, R_L, C, gamma, is_global=is_global)
+    if show_jump:
+        DeltaL_full = recover_BDLP(Y, len(R_L), P_, Q_, QQ_hat_full)
+        _, _, classified_brownian_mask = disentangle_BM(DeltaL_full, Q_, Sigma, gamma)
 
     forecast_grOU = np.zeros((test_size, K, forecast_step))
     df_grOU = np.empty((K, T_train + test_size))
@@ -1221,11 +1225,40 @@ def grOU_edge_model(Y, Adj, test_set, test_size, forecast_step, R_L, C, P_, Q_, 
         # BIC = -θ^T [K] θ + (LK + Σ R_l) * log(N)  (Equation 5.1)
        return alphas, betas, -theta_hat.T @ KK @ theta_hat + (len(R_L) * K + sum(R_L)) * np.log(len(Q_))
     else:
-       return forecast_grOU
+        if show_jump:
+            return forecast_grOU, classified_brownian_mask
+        else:
+            return forecast_grOU
 
 # ============================================================
 # FORECASTING MODEL EVALUATION
 # ============================================================
+def jump_detection_rates(jump_times: np.ndarray, Q: np.ndarray, classified_brownian_mask: np.ndarray):
+    """
+    Compare true jump times against disentangle_BM's classification on grid Q.
+
+    :param jump_times:  True jump times (continuous-time), 1D np.ndarray. Use an
+                         empty array if there are no true jumps (e.g. BM regime).
+    :param Q:            Coarse-grid partition used for estimation, (M+1, ) np.ndarray.
+    :param classified_brownian_mask: boolean array, shape (M, ) -- disentangle_BM's
+                         3rd return value ('subset'). True = classified Brownian (not a jump).
+    :return: (tpr, fpr)
+    """
+    # Bin each true jump time into its coarse interval: np.histogram handles
+    # the "which interval does this jump fall in" lookup in one call.
+    true_jump_count, _ = np.histogram(jump_times, bins=Q)
+    true_jump_per_coarse = true_jump_count > 0        # shape (M,)
+
+    classified_jump = ~classified_brownian_mask        # model says "jump"
+    pos = true_jump_per_coarse
+    neg = ~true_jump_per_coarse
+
+    tp = np.sum(classified_jump & pos)
+    fp = np.sum(classified_jump & neg)
+
+    tpr = tp / pos.sum() if pos.sum() > 0 else np.nan
+    fpr = fp / neg.sum() if neg.sum() > 0 else np.nan
+    return tpr, fpr
 
 def evaluate_forecast(Y, forecast, test_set):
     """
