@@ -917,7 +917,7 @@ def estimate_Sigma_L(DeltaL: np.ndarray, Q: np.ndarray, gamma: float, epsilon: f
     while not converged:
         Sigma_hat_old = Sigma_hat_new
         # Identify Brownian-dominated increments using current Sigma estimate
-        DeltaW, DeltaQ_W = disentangle_BM(DeltaL, Q, Sigma_hat_old, gamma)
+        DeltaW, DeltaQ_W, _ = disentangle_BM(DeltaL, Q, Sigma_hat_old, gamma)
         # Re-estimate Sigma from the identified Brownian increments
         Sigma_hat_new = estimate_Sigma(DeltaW, DeltaQ_W)
         converged = np.linalg.norm(Sigma_hat_new - Sigma_hat_old) <= epsilon
@@ -991,7 +991,7 @@ def disentangle_BM(DeltaL: np.ndarray, Q: np.ndarray, Sigma: np.ndarray, gamma: 
     # Return only the Brownian-dominated increments and their time steps
     DeltaQ_W = DeltaQ[subset]
     DeltaW = DeltaX[:, subset]
-    return DeltaW, DeltaQ_W
+    return DeltaW, DeltaQ_W, subset
 
 # ============================================================
 # LÉVY MEASURE FUNCTIONAL ESTIMATION
