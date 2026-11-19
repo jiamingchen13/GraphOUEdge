@@ -1301,6 +1301,113 @@ def evaluate_forecast(Y, forecast, test_set):
 
     return rmse, acc
 
+def model_sensitive(data, test_size, jump_times_all, adj_sim, forecast_step, Delta_P, P_Q_ratio, gamma, label, scenario):
+    """
+    Evaluate all forecasting models across all Monte Carlo replicates in parallel.
+
+    Supports three network misspecification scenarios (Section 4.3):
+      - 'correct':   Use the full network (all K edges)
+      - 'missing_5': Remove the edge with α=5 (dominant autoregressive edge)
+      - 'missing_1': Remove the edge with α=1 (weakly persistent edge)
+
+    Results are saved as .npy files for subsequent analysis and plotting.
+
+    :param data:          Simulated paths, shape (n_samples, K, T_total) np.ndarray
+    :param test_size:     Number of time steps reserved for out-of-sample evaluation, int
+    :param adj_sim:       Line graph adjacency structure for grOU/GNAR models
+    :param forecast_step: Number of steps ahead to forecast, int
+    :param P_Q_ratio:     Ratio of fine-grid to coarse-grid step sizes, int
+    :param gamma:         Critical region hyperparameter, float
+    :param label:         Misspecification scenario: 'correct', 'missing_5', or 'missing_1', str
+    :param scenario:      Simulation scenario name (used for output directory), str
+    :return:              None. Saves 'rmse_{label}.npy', 'dir_{label}.npy',
+                          'time_{label}.npy' to the scenario output directory.
+    """
+    # Create directory and does nothing if already exists
+    os.makedirs('./data/LOBSTERdata/output/sim/' + scenario, exist_ok=True)
+
+    T = (data.shape[2] - 1) ** (1/7)
+    n = data.shape[0]
+    RMSE = np.zeros((n, 1))
+    direction_acc = np.zeros((n, 1))
+    comp_time = np.zeros((n, 1))
+    trpo = np.zeros((n, 1))
+    fapo = np.zeros((n, 1))
+
+    # Build argument list for parallel workers: split train/test for each replicate
+    args_list = [(i, data[i, :, :-test_size], data[i, :, -test_size:], jump_times_all[i], adj_sim, forecast_step, Delta_P, T, P_Q_ratio, gamma) for i in range(n)]
+
+    # Parallel evaluation across all Monte Carlo replicates
+    with Pool(os.cpu_count()) as pool:
+        for idx, trpo_row, fapo_row, rmse_row, dir_row, comp_row in pool.imap_unordered(model_sensitive_single, args_list):
+            trpo[idx] = trpo_row
+            fapo[idx] = fapo_row
+            RMSE[idx] = rmse_row
+            direction_acc[idx] = dir_row
+            comp_time[idx] = comp_row
+
+    # Save results for plotting
+    with open('./data/LOBSTERdata/output/sim/' + scenario + '/rmse_' + label + '.npy', 'wb') as f:
+        np.save(f, RMSE)
+    with open('./data/LOBSTERdata/output/sim/' + scenario + '/dir_' + label + '.npy', 'wb') as f:
+        np.save(f, direction_acc)
+    with open('./data/LOBSTERdata/output/sim/' + scenario + '/time_' + label + '.npy', 'wb') as f:
+        np.save(f, comp_time)
+    with open('./data/LOBSTERdata/output/sim/' + scenario + '/trpo_' + label + '.npy', 'wb') as f:
+        np.save(f, trpo)
+    with open('./data/LOBSTERdata/output/sim/' + scenario + '/fapo_' + label + '.npy', 'wb') as f:
+        np.save(f, fapo)
+
+def model_sensitive_single(args):
+    """
+    Evaluate all configuration sensitive test on a single simulated path.
+
+    For one Monte Carlo replicate, fits and evaluates grOU model, recording jump true-positive and false-positive rate, RMSE, directional accuracy, and computation time.
+
+    :param args: Tuple (index_, sim_Y, sim_test, adj_sim, forecast_step, P_Q_ratio, gamma) where:
+                   - index_ (int):         Sample index in the output arrays
+                   - sim_Y (np.ndarray):   Training data, shape (K, T_train)
+                   - sim_test (np.ndarray):Test data, shape (K, T_test)
+                   - adj_sim:              Line graph adjacency structure for grOU
+                   - forecast_step (int):  Number of steps ahead to forecast
+                   - P_sim (float):        Fine grid P
+                   - P_Q_ratio (int):      Ratio of fine-grid to coarse-grid step sizes
+                   - gamma (float):        Critical region hyperparameter
+    :return:    Tuple (index_, RMSE_row, direction_row, comp_row) where:
+                  - Jump_trpo_row (np.ndarray): Jump true-positive rate for grOU model, shape (1, )
+                  - Jump_fapo_row (np.ndarray): Jump false-positive rate for grOU model, shape (1, )
+                  - RMSE_row (np.ndarray):      RMSE for grOU model, shape (1, )
+                  - direction_row (np.ndarray): DirAcc for grOU model, shape (1, )
+                  - comp_row (np.ndarray):      Computation time for grOU model, shape (1, )
+    """
+    index_, sim_Y, sim_test, jump_times, adj_sim, forecast_step, Delta_P, T, P_Q_ratio, gamma = args
+
+    # Build sliding-window test set: shape (test_size, K, forecast_step)
+    sim_test_set = sliding_window_view(sim_test, (sim_Y.shape[0], forecast_step))[0]
+    sim_test_size = sim_test_set.shape[0]
+
+    # Construct fine grid P and coarse grid Q from the training data length
+    P_sim = np.array([i * Delta_P for i in range(sim_Y.shape[1])])
+    Q_sim = np.append(P_sim[::P_Q_ratio], P_sim[-1]) if (sim_Y.shape[1] - 1) % P_Q_ratio != 0 else P_sim[::P_Q_ratio]
+
+    trpo_row = np.zeros(1)
+    fapo_row = np.zeros(1)
+    RMSE_row = np.zeros(1)
+    direction_row = np.zeros(1)
+    comp_row = np.zeros(1)
+
+    start = time.perf_counter()
+    forecast, classified_brownian_mask = grOU_edge_model(sim_Y, adj_sim, sim_test_set, sim_test_size, forecast_step, [1], 1, P_sim, Q_sim, gamma, is_global=False, show_jump=True)
+    comp_row[0] = time.perf_counter() - start
+    RMSE_row[0], direction_row[0] = evaluate_forecast(sim_Y, forecast, sim_test_set)
+
+    jump_fine_index = jump_times / (T ** -6)
+    # Keep only jumps that fall within the training window and express those indices on the same rescaled coordinate used for P_sim/Q_sim
+    jump_times_local = jump_fine_index[jump_fine_index < sim_Y.shape[1]] * Delta_P
+    trpo_row[0], fapo_row[0] = jump_detection_rates(jump_times_local, Q_sim, classified_brownian_mask)
+
+    return index_, trpo_row, fapo_row, RMSE_row, direction_row, comp_row
+
 # ============================================================
 # JOINT GRAPH-MODEL SELECTION
 # ============================================================
