@@ -1301,7 +1301,7 @@ def evaluate_forecast(Y, forecast, test_set):
 
     return rmse, acc
 
-def model_sensitive(data, test_size, jump_times_all, adj_sim, forecast_step, Delta_P, P_Q_ratio, gamma, label, scenario):
+def model_sensitive(data, test_size, jump_times_all, adj_sim, forecast_step, Delta_P, P_Q_ratio, gamma, scenario):
     """
     Evaluate all forecasting models across all Monte Carlo replicates in parallel.
 
@@ -1346,17 +1346,22 @@ def model_sensitive(data, test_size, jump_times_all, adj_sim, forecast_step, Del
             direction_acc[idx] = dir_row
             comp_time[idx] = comp_row
 
-    # Save results for plotting
-    with open('./data/LOBSTERdata/output/sim/' + scenario + '/rmse_' + label + '.npy', 'wb') as f:
-        np.save(f, RMSE)
-    with open('./data/LOBSTERdata/output/sim/' + scenario + '/dir_' + label + '.npy', 'wb') as f:
-        np.save(f, direction_acc)
-    with open('./data/LOBSTERdata/output/sim/' + scenario + '/time_' + label + '.npy', 'wb') as f:
-        np.save(f, comp_time)
-    with open('./data/LOBSTERdata/output/sim/' + scenario + '/trpo_' + label + '.npy', 'wb') as f:
-        np.save(f, trpo)
-    with open('./data/LOBSTERdata/output/sim/' + scenario + '/fapo_' + label + '.npy', 'wb') as f:
-        np.save(f, fapo)
+    files = {
+        "TPR": trpo,
+        "FPR": fapo,
+        "RMSE": RMSE,
+        "DirAcc": direction_acc,
+        "Time_s": comp_time,
+    }
+
+    arrays = {name: path.reshape(-1) for name, path in files.items()}
+    per_path = pd.DataFrame(arrays)
+    with open('./data/LOBSTERdata/output/sim/' + scenario + '/metrics_per_path_P_' + f"{Delta_P:.4f}" + '_ratio_' + str(P_Q_ratio) + '_gamma_' + str(gamma) + '.npy', 'wb') as f:
+        np.save(f, per_path)
+    summary = per_path.agg(["max", "min", "mean", "std", "median"]).T
+    print(summary.to_string(float_format=lambda x: f"{x:.4f}"))
+
+    return float(summary['mean']['RMSE']), float(summary['mean']['DirAcc']), float(summary['mean']['Time_s'])
 
 def model_sensitive_single(args):
     """
