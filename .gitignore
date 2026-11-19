@@ -5,3 +5,5 @@ __pycache__
 mcar/__pycache__
 .idea
 legacy.ipynb
+data/LOBSTERdata/output/test/aggregate/log_price.npz
+data/LOBSTERdata/output/train/aggregate/log_price.npz
