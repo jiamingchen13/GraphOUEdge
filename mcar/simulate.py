@@ -199,8 +199,10 @@ def Q_QQ_inverse(Q_QQ: np.ndarray, K: int) -> np.ndarray:
     for j in range(p - 1):
         Q_inv[0:K, j * K:(j + 1) * K] = -np.linalg.solve(last_row_blocks[0], last_row_blocks[j + 1])
     # Last block in first row: -Q_p^{-1} = solve(-Q_p, I)
-    Q_inv[0:K, (p - 1) * K:p * K] = np.linalg.solve(last_row_blocks[0], np.eye(K))
-
+    try:
+        Q_inv[0:K, (p - 1) * K:p * K] = np.linalg.solve(last_row_blocks[0], np.eye(K))
+    except:
+        Q_inv[0:K, (p - 1) * K:p * K] = np.linalg.solve(last_row_blocks[0] + 1e-8 * np.eye(K), np.eye(K))
     # ---- Lower block rows: identity blocks on the first subdiagonal ----
     # Q^{-1}[i*K:(i+1)*K, (i-1)*K:i*K] = I_K  for i = 1, ..., p-1
     for i in range(1, p):
