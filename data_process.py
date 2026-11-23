@@ -69,9 +69,6 @@ All continuous-time models (OU, MCAR, grOU) use the exact prediction formula
 from Proposition 2.2 of Chen & Veraart (2026):
     E[Y_{t+h} | F_t] = E[Y_0] + A e^{Qh} [X_t - E[X_0]]
 
-Evaluation metrics:
-  - evaluate_forecast: Computes RMSE and directional accuracy (DirAcc)
-
 --------------------------------------------------------------------------------
 5. Joint Graph-Model Selection (Section 5.3)
 --------------------------------------------------------------------------------
@@ -96,12 +93,18 @@ Implements the two-stage joint network and model selection procedure:
 --------------------------------------------------------------------------------
 6. Simulation Study Utilities (Section 4)
 --------------------------------------------------------------------------------
-  - process_one_sim:    Estimate grOU parameters at multiple time horizons
-                        (for consistency/convergence experiments)
-  - model_pred_single:  Evaluate all forecasting models for one simulated path
-  - model_pred:         Parallel evaluation across all Monte Carlo replicates
-  - boxplot_:           Generate half-violin boxplots for RMSE, DirAcc, and
-                        computation time across models and misspecification scenarios
+  - process_one_sim:        Estimate grOU parameters at multiple time horizons
+                            (for consistency/convergence experiments)
+  - evaluate_forecast:      Computes RMSE and directional accuracy (DirAcc)
+  - jump_detection_rates:   Computes the True-positive rate and False-positive rate for jumps
+  - model_sensitive_single: Evaluate metrics on grOU model for one simulated path
+  - model_sensitive:        Parallel metrics evaluation across all Monte Carlo replicates
+  - draw_ratio_heatmaps:    Generate heatmaps for different P_Q_ratios
+  - sensitive_analysis:     Plot one figure per P_Q_ratio and summarize grid-search results
+  - model_pred_single:      Evaluate all forecasting models for one simulated path
+  - model_pred:             Parallel evaluation across all Monte Carlo replicates
+  - boxplot_:               Generate half-violin boxplots for RMSE, DirAcc, and
+                            computation time across models and misspecification scenarios
 
 --------------------------------------------------------------------------------
 References:
@@ -437,9 +440,9 @@ def aggregate_assets(assets, base_dir, out_dir, max_workers_days=None):
     log_price_path = out_dir + 'log_price.npz'
     np.savez(log_price_path, timestamps=log_price_data.index.astype('datetime64[s]'), **{col: log_price_data[col].values for col in log_price_data.columns})
 
-# ============================================================
-# MODULATED REALIZED COVARIANCE (MRC) ESTIMATOR
-# ============================================================
+# =============================================================
+# Covariance Estimation via MODULATED REALIZED COVARIANCE (MRC)
+# =============================================================
 
 def MRC(Y, delta, theta, is_corr=True):
     """
@@ -1231,189 +1234,6 @@ def grOU_edge_model(Y, Adj, test_set, test_size, forecast_step, R_L, C, P_, Q_, 
             return forecast_grOU
 
 # ============================================================
-# FORECASTING MODEL EVALUATION
-# ============================================================
-def jump_detection_rates(jump_times: np.ndarray, Q: np.ndarray, classified_brownian_mask: np.ndarray):
-    """
-    Compare true jump times against disentangle_BM's classification on grid Q.
-
-    :param jump_times:  True jump times (continuous-time), 1D np.ndarray. Use an
-                         empty array if there are no true jumps (e.g. BM regime).
-    :param Q:            Coarse-grid partition used for estimation, (M+1, ) np.ndarray.
-    :param classified_brownian_mask: boolean array, shape (M, ) -- disentangle_BM's
-                         3rd return value ('subset'). True = classified Brownian (not a jump).
-    :return: (tpr, fpr)
-    """
-    # Bin each true jump time into its coarse interval: np.histogram handles
-    # the "which interval does this jump fall in" lookup in one call.
-    true_jump_count, _ = np.histogram(jump_times, bins=Q)
-    true_jump_per_coarse = true_jump_count > 0        # shape (M,)
-
-    classified_jump = ~classified_brownian_mask        # model says "jump"
-    pos = true_jump_per_coarse
-    neg = ~true_jump_per_coarse
-
-    tp = np.sum(classified_jump & pos)
-    fp = np.sum(classified_jump & neg)
-
-    tpr = tp / pos.sum() if pos.sum() > 0 else np.nan
-    fpr = fp / neg.sum() if neg.sum() > 0 else np.nan
-    return tpr, fpr
-
-def evaluate_forecast(Y, forecast, test_set):
-    """
-    Evaluate forecast accuracy using RMSE and directional accuracy (DirAcc).
-
-    Computes two metrics as defined in Section 4.2 of Chen & Veraart (2026):
-
-    1. **RMSE** (Root Mean Squared Error):
-           RMSE = sqrt( (1/TK) Σ_{t,k} (Y^{(k)}_t - Ŷ^{(k)}_t)^2 )
-
-    2. **DirAcc** (Directional Accuracy):
-           DirAcc = (1/TK) Σ_{t,k} 1{ sgn(Y^{(k)}_t - Y^{(k)}_{t-1}) = sgn(Ŷ^{(k)}_t - Y^{(k)}_{t-1}) }
-       Measures the fraction of correctly predicted directions of change.
-       By convention, the naive model achieves DirAcc = 0.5.
-       Returns 0.5 if the forecast is constant (equal to the last observed value).
-
-    :param Y:        Training data (used to get the last observed value Y_{T_train}),
-                     shape (K, T_train) np.ndarray
-    :param forecast: Forecast array, shape (test_size, K, forecast_step) np.ndarray
-    :param test_set: True future values, shape (test_size, K, forecast_step) np.ndarray
-    :return:         Tuple (rmse, acc) where:
-                       rmse (float): Root mean squared error
-                       acc (float):  Directional accuracy in [0, 1]
-    """
-    # RMSE: average squared error across all time steps, edges, and forecast horizons
-    rmse = np.sqrt(np.mean((forecast - test_set) ** 2))
-
-    # Build the "last observed value" array for directional comparison:
-    # last_[0] = Y[:, -1] (last training observation)
-    # last_[t] = test_set[t-1, :, 0] (first element of previous test window)
-    last_ = np.append(np.array(Y.copy())[:, -1].reshape(-1, 1)[np.newaxis, :, :], test_set[:-1, :, 0:1], axis=0)
-
-    # Compute sign of forecast increments and true increments
-    forecast_dir = np.sign(np.diff(np.append(last_, forecast, axis=2), axis=2))
-    test_dir = np.sign(np.diff(np.append(last_, test_set, axis=2), axis=2))
-
-    # DirAcc: fraction of correctly predicted directions
-    # Return 0.5 (naive baseline) if forecast is constant (no directional information)
-    acc = 0.5 if (last_ == forecast).all() else (test_dir == forecast_dir).mean()
-
-    return rmse, acc
-
-def model_sensitive(data, test_size, jump_times_all, adj_sim, forecast_step, Delta_P, P_Q_ratio, gamma, scenario):
-    """
-    Evaluate all forecasting models across all Monte Carlo replicates in parallel.
-
-    Supports three network misspecification scenarios (Section 4.3):
-      - 'correct':   Use the full network (all K edges)
-      - 'missing_5': Remove the edge with α=5 (dominant autoregressive edge)
-      - 'missing_1': Remove the edge with α=1 (weakly persistent edge)
-
-    Results are saved as .npy files for subsequent analysis and plotting.
-
-    :param data:          Simulated paths, shape (n_samples, K, T_total) np.ndarray
-    :param test_size:     Number of time steps reserved for out-of-sample evaluation, int
-    :param adj_sim:       Line graph adjacency structure for grOU/GNAR models
-    :param forecast_step: Number of steps ahead to forecast, int
-    :param P_Q_ratio:     Ratio of fine-grid to coarse-grid step sizes, int
-    :param gamma:         Critical region hyperparameter, float
-    :param label:         Misspecification scenario: 'correct', 'missing_5', or 'missing_1', str
-    :param scenario:      Simulation scenario name (used for output directory), str
-    :return:              None. Saves 'rmse_{label}.npy', 'dir_{label}.npy',
-                          'time_{label}.npy' to the scenario output directory.
-    """
-    # Create directory and does nothing if already exists
-    os.makedirs('./data/LOBSTERdata/output/sim/' + scenario, exist_ok=True)
-
-    T = (data.shape[2] - 1) ** (1/7)
-    n = data.shape[0]
-    RMSE = np.zeros((n, 1))
-    direction_acc = np.zeros((n, 1))
-    comp_time = np.zeros((n, 1))
-    trpo = np.zeros((n, 1))
-    fapo = np.zeros((n, 1))
-
-    # Build argument list for parallel workers: split train/test for each replicate
-    args_list = [(i, data[i, :, :-test_size], data[i, :, -test_size:], jump_times_all[i], adj_sim, forecast_step, Delta_P, T, P_Q_ratio, gamma) for i in range(n)]
-
-    # Parallel evaluation across all Monte Carlo replicates
-    with Pool(os.cpu_count()) as pool:
-        for idx, trpo_row, fapo_row, rmse_row, dir_row, comp_row in pool.imap_unordered(model_sensitive_single, args_list):
-            trpo[idx] = trpo_row
-            fapo[idx] = fapo_row
-            RMSE[idx] = rmse_row
-            direction_acc[idx] = dir_row
-            comp_time[idx] = comp_row
-
-    files = {
-        "TPR": trpo,
-        "FPR": fapo,
-        "RMSE": RMSE,
-        "DirAcc": direction_acc,
-        "Time_s": comp_time,
-    }
-
-    arrays = {name: path.reshape(-1) for name, path in files.items()}
-    per_path = pd.DataFrame(arrays)
-    with open('./data/LOBSTERdata/output/sim/' + scenario + '/metrics_per_path_P_' + f"{Delta_P:.4f}" + '_ratio_' + str(P_Q_ratio) + '_gamma_' + str(gamma) + '.npy', 'wb') as f:
-        np.save(f, per_path)
-    summary = per_path.agg(["max", "min", "mean", "std", "median"]).T
-    print(summary.to_string(float_format=lambda x: f"{x:.4f}"))
-
-    return float(summary['mean']['RMSE']), float(summary['mean']['DirAcc']), float(summary['mean']['Time_s'])
-
-def model_sensitive_single(args):
-    """
-    Evaluate all configuration sensitive test on a single simulated path.
-
-    For one Monte Carlo replicate, fits and evaluates grOU model, recording jump true-positive and false-positive rate, RMSE, directional accuracy, and computation time.
-
-    :param args: Tuple (index_, sim_Y, sim_test, adj_sim, forecast_step, P_Q_ratio, gamma) where:
-                   - index_ (int):         Sample index in the output arrays
-                   - sim_Y (np.ndarray):   Training data, shape (K, T_train)
-                   - sim_test (np.ndarray):Test data, shape (K, T_test)
-                   - adj_sim:              Line graph adjacency structure for grOU
-                   - forecast_step (int):  Number of steps ahead to forecast
-                   - P_sim (float):        Fine grid P
-                   - P_Q_ratio (int):      Ratio of fine-grid to coarse-grid step sizes
-                   - gamma (float):        Critical region hyperparameter
-    :return:    Tuple (index_, RMSE_row, direction_row, comp_row) where:
-                  - Jump_trpo_row (np.ndarray): Jump true-positive rate for grOU model, shape (1, )
-                  - Jump_fapo_row (np.ndarray): Jump false-positive rate for grOU model, shape (1, )
-                  - RMSE_row (np.ndarray):      RMSE for grOU model, shape (1, )
-                  - direction_row (np.ndarray): DirAcc for grOU model, shape (1, )
-                  - comp_row (np.ndarray):      Computation time for grOU model, shape (1, )
-    """
-    index_, sim_Y, sim_test, jump_times, adj_sim, forecast_step, Delta_P, T, P_Q_ratio, gamma = args
-
-    # Build sliding-window test set: shape (test_size, K, forecast_step)
-    sim_test_set = sliding_window_view(sim_test, (sim_Y.shape[0], forecast_step))[0]
-    sim_test_size = sim_test_set.shape[0]
-
-    # Construct fine grid P and coarse grid Q from the training data length
-    P_sim = np.array([i * Delta_P for i in range(sim_Y.shape[1])])
-    Q_sim = np.append(P_sim[::P_Q_ratio], P_sim[-1]) if (sim_Y.shape[1] - 1) % P_Q_ratio != 0 else P_sim[::P_Q_ratio]
-
-    trpo_row = np.zeros(1)
-    fapo_row = np.zeros(1)
-    RMSE_row = np.zeros(1)
-    direction_row = np.zeros(1)
-    comp_row = np.zeros(1)
-
-    start = time.perf_counter()
-    forecast, classified_brownian_mask = grOU_edge_model(sim_Y, adj_sim, sim_test_set, sim_test_size, forecast_step, [1], 1, P_sim, Q_sim, gamma, is_global=False, show_jump=True)
-    comp_row[0] = time.perf_counter() - start
-    RMSE_row[0], direction_row[0] = evaluate_forecast(sim_Y, forecast, sim_test_set)
-
-    jump_fine_index = jump_times / (T ** -6)
-    # Keep only jumps that fall within the training window and express those indices on the same rescaled coordinate used for P_sim/Q_sim
-    jump_times_local = jump_fine_index[jump_fine_index < sim_Y.shape[1]] * Delta_P
-    trpo_row[0], fapo_row[0] = jump_detection_rates(jump_times_local, Q_sim, classified_brownian_mask)
-
-    return index_, trpo_row, fapo_row, RMSE_row, direction_row, comp_row
-
-# ============================================================
 # JOINT GRAPH-MODEL SELECTION
 # ============================================================
 
@@ -1751,6 +1571,266 @@ def process_one_sim(arg):
 
     return result
 
+def evaluate_forecast(Y, forecast, test_set):
+    """
+    Evaluate forecast accuracy using RMSE and directional accuracy (DirAcc).
+
+    Computes two metrics as defined in Section 4.2 of Chen & Veraart (2026):
+
+    1. **RMSE** (Root Mean Squared Error):
+           RMSE = sqrt( (1/TK) Σ_{t,k} (Y^{(k)}_t - Ŷ^{(k)}_t)^2 )
+
+    2. **DirAcc** (Directional Accuracy):
+           DirAcc = (1/TK) Σ_{t,k} 1{ sgn(Y^{(k)}_t - Y^{(k)}_{t-1}) = sgn(Ŷ^{(k)}_t - Y^{(k)}_{t-1}) }
+       Measures the fraction of correctly predicted directions of change.
+       By convention, the naive model achieves DirAcc = 0.5.
+       Returns 0.5 if the forecast is constant (equal to the last observed value).
+
+    :param Y:        Training data (used to get the last observed value Y_{T_train}),
+                     shape (K, T_train) np.ndarray
+    :param forecast: Forecast array, shape (test_size, K, forecast_step) np.ndarray
+    :param test_set: True future values, shape (test_size, K, forecast_step) np.ndarray
+    :return:         Tuple (rmse, acc) where:
+                       rmse (float): Root mean squared error
+                       acc (float):  Directional accuracy in [0, 1]
+    """
+    # RMSE: average squared error across all time steps, edges, and forecast horizons
+    rmse = np.sqrt(np.mean((forecast - test_set) ** 2))
+
+    # Build the "last observed value" array for directional comparison:
+    # last_[0] = Y[:, -1] (last training observation)
+    # last_[t] = test_set[t-1, :, 0] (first element of previous test window)
+    last_ = np.append(np.array(Y.copy())[:, -1].reshape(-1, 1)[np.newaxis, :, :], test_set[:-1, :, 0:1], axis=0)
+
+    # Compute sign of forecast increments and true increments
+    forecast_dir = np.sign(np.diff(np.append(last_, forecast, axis=2), axis=2))
+    test_dir = np.sign(np.diff(np.append(last_, test_set, axis=2), axis=2))
+
+    # DirAcc: fraction of correctly predicted directions
+    # Return 0.5 (naive baseline) if forecast is constant (no directional information)
+    acc = 0.5 if (last_ == forecast).all() else (test_dir == forecast_dir).mean()
+
+    return rmse, acc
+
+def jump_detection_rates(jump_times: np.ndarray, Q: np.ndarray, classified_brownian_mask: np.ndarray):
+    """
+    Compare true jump times against disentangle_BM's classification on grid Q.
+
+    :param jump_times:  True jump times (continuous-time), 1D np.ndarray. Use an
+                         empty array if there are no true jumps (e.g. BM regime).
+    :param Q:            Coarse-grid partition used for estimation, (M+1, ) np.ndarray.
+    :param classified_brownian_mask: boolean array, shape (M, ) -- disentangle_BM's
+                         3rd return value ('subset'). True = classified Brownian (not a jump).
+    :return: (tpr, fpr) Where tpr represents true-positive rate and fpr represents false-positive rate.
+    """
+    # Bin each true jump time into its coarse interval: np.histogram handles
+    # the "which interval does this jump fall in" lookup in one call.
+    true_jump_count, _ = np.histogram(jump_times, bins=Q)
+    true_jump_per_coarse = true_jump_count > 0
+
+    classified_jump = ~classified_brownian_mask
+    pos = true_jump_per_coarse
+    neg = ~true_jump_per_coarse
+
+    tp = np.sum(classified_jump & pos)
+    fp = np.sum(classified_jump & neg)
+
+    tpr = tp / pos.sum() if pos.sum() > 0 else np.nan
+    fpr = fp / neg.sum() if neg.sum() > 0 else np.nan
+    return tpr, fpr
+
+def model_sensitive_single(args):
+    """
+    Evaluate all configuration sensitive test on a single simulated path.
+
+    For one Monte Carlo replicate, fits and evaluates grOU model, recording jump true-positive and false-positive rate,
+    RMSE, directional accuracy, and computation time.
+
+    :param args: Tuple (index_, sim_Y, sim_test, jump_times, adj_sim, forecast_step, Delta_P, T, P_Q_ratio, gamma) where:
+                   - index_ (int):            Sample index in the output arrays
+                   - sim_Y (np.ndarray):      Training data, shape (K, T_train)
+                   - sim_test (np.ndarray):   Test data, shape (K, T_test)
+                   - jump_times (np.ndarray): Jump timestamps in [0, T]
+                   - adj_sim:                 Line graph adjacency structure for grOU
+                   - forecast_step (int):     Number of steps ahead to forecast
+                   - Delta_P (float):         Increment in Fine grid P
+                   - T (int):                 Time duration
+                   - P_Q_ratio (int):         Ratio of fine-grid to coarse-grid step sizes
+                   - gamma (float):           Critical region hyperparameter
+    :return:    Tuple (index_, trpo_row, fapo_row, RMSE_row, direction_row, comp_row) where:
+                  - trpo_row (np.ndarray):      Jump true-positive rate for grOU model, shape (1, )
+                  - fapo_row (np.ndarray):      Jump false-positive rate for grOU model, shape (1, )
+                  - RMSE_row (np.ndarray):      RMSE for grOU model, shape (1, )
+                  - direction_row (np.ndarray): DirAcc for grOU model, shape (1, )
+                  - comp_row (np.ndarray):      Computation time for grOU model, shape (1, )
+    """
+    index_, sim_Y, sim_test, jump_times, adj_sim, forecast_step, Delta_P, T, P_Q_ratio, gamma = args
+
+    # Build sliding-window test set: shape (test_size, K, forecast_step)
+    sim_test_set = sliding_window_view(sim_test, (sim_Y.shape[0], forecast_step))[0]
+    sim_test_size = sim_test_set.shape[0]
+
+    # Construct fine grid P and coarse grid Q from the training data length
+    P_sim = np.array([i * Delta_P for i in range(sim_Y.shape[1])])
+    Q_sim = np.append(P_sim[::P_Q_ratio], P_sim[-1]) if (sim_Y.shape[1] - 1) % P_Q_ratio != 0 else P_sim[::P_Q_ratio]
+
+    trpo_row = np.zeros(1)
+    fapo_row = np.zeros(1)
+    RMSE_row = np.zeros(1)
+    direction_row = np.zeros(1)
+    comp_row = np.zeros(1)
+
+    start = time.perf_counter()
+    forecast, classified_brownian_mask = grOU_edge_model(sim_Y, adj_sim, sim_test_set, sim_test_size, forecast_step, [1], 1, P_sim, Q_sim, gamma, is_global=False, show_jump=True)
+    comp_row[0] = time.perf_counter() - start
+    RMSE_row[0], direction_row[0] = evaluate_forecast(sim_Y, forecast, sim_test_set)
+
+    jump_fine_index = jump_times / (T ** -6)
+    # Keep only jumps that fall within the training window and express those indices on the same rescaled coordinate used for P_sim/Q_sim
+    jump_times_local = jump_fine_index[jump_fine_index < sim_Y.shape[1]] * Delta_P
+    trpo_row[0], fapo_row[0] = jump_detection_rates(jump_times_local, Q_sim, classified_brownian_mask)
+
+    return index_, trpo_row, fapo_row, RMSE_row, direction_row, comp_row
+
+def model_sensitive(data, test_size, jump_times_all, adj_sim, forecast_step, Delta_P, P_Q_ratio, gamma, scenario):
+    """
+    Evaluate all metrics on grOU models across all Monte Carlo replicates in parallel.
+
+    Results are saved as .npy files for subsequent analysis and plotting.
+
+    :param data:           Simulated paths, shape (n_samples, K, T_total) np.ndarray
+    :param test_size:      Number of time steps reserved for out-of-sample evaluation, int
+    :param jump_times_all: Jump timestamps for all paths
+    :param adj_sim:        Line graph adjacency structure for grOU/GNAR models
+    :param forecast_step:  Number of steps ahead to forecast, int
+    :param Delta_P:        Increment in Fine grid P, float
+    :param P_Q_ratio:      Ratio of fine-grid to coarse-grid step sizes, int
+    :param gamma:          Critical region hyperparameter, float
+    :param scenario:       Simulation scenario name (used for output directory), str
+    :return:               None. Saves 'rmse_{label}.npy', 'dir_{label}.npy',
+                           'time_{label}.npy' to the scenario output directory.
+    """
+    # Create directory and does nothing if already exists
+    os.makedirs('./data/LOBSTERdata/output/sim/' + scenario, exist_ok=True)
+
+    T = (data.shape[2] - 1) ** (1/7)
+    n = data.shape[0]
+    RMSE = np.zeros((n, 1))
+    direction_acc = np.zeros((n, 1))
+    comp_time = np.zeros((n, 1))
+    trpo = np.zeros((n, 1))
+    fapo = np.zeros((n, 1))
+
+    # Build argument list for parallel workers: split train/test for each replicate
+    args_list = [(i, data[i, :, :-test_size], data[i, :, -test_size:], jump_times_all[i], adj_sim, forecast_step, Delta_P, T, P_Q_ratio, gamma) for i in range(n)]
+
+    # Parallel evaluation across all Monte Carlo replicates
+    with Pool(os.cpu_count()) as pool:
+        for idx, trpo_row, fapo_row, rmse_row, dir_row, comp_row in pool.imap_unordered(model_sensitive_single, args_list):
+            trpo[idx] = trpo_row
+            fapo[idx] = fapo_row
+            RMSE[idx] = rmse_row
+            direction_acc[idx] = dir_row
+            comp_time[idx] = comp_row
+
+    files = {
+        "TPR": trpo,
+        "FPR": fapo,
+        "RMSE": RMSE,
+        "DirAcc": direction_acc,
+        "Time_s": comp_time,
+    }
+
+    arrays = {name: path.reshape(-1) for name, path in files.items()}
+    per_path = pd.DataFrame(arrays)
+    with open('./data/LOBSTERdata/output/sim/' + scenario + '/metrics_per_path_P_' + f"{Delta_P:.4f}" + '_ratio_' + str(P_Q_ratio) + '_gamma_' + str(gamma) + '.npy', 'wb') as f:
+        np.save(f, per_path)
+
+def draw_ratio_heatmaps(table, ratio, out_dir, delta_P, gammas, metrics):
+    """Plot mean metrics for one grid ratio in a 2-by-2 heatmap figure.
+
+    Each panel has the fine-grid step on its y-axis and gamma on its x-axis.
+    Colours span that panel's data range; missing values appear light gray.
+    The figure is saved as "heatmaps_ratio_{ratio}.png".
+
+    :param table:   DataFrame with columns "P", "ratio", "gamma", and "{metric}_mean" for each requested metric.
+    :param ratio:   Coarse-to-fine grid ratio to display.
+    :param out_dir: Output directory path ending in a path separator.
+    :param delta_P: Ordered fine-grid steps to show on the y-axis.
+    :param gammas:  Ordered threshold constants to show on the x-axis.
+    :param metrics: Four metric names, in panel order.
+    :return:        None. Writes a PNG figure to "out_dir".
+    """
+    selected = table[table["ratio"] == ratio]
+    fig, axes = plt.subplots(2, 2, figsize=(6.8, 5.5), layout="constrained")
+
+    for i, (ax, metric) in enumerate(zip(axes.flat, metrics)):
+        grid = (selected.pivot(index="P", columns="gamma", values=f"{metric}_mean").reindex(index=delta_P, columns=gammas).to_numpy(dtype=float))
+        cmap = plt.get_cmap("viridis").copy()
+        cmap.set_bad("lightgray")
+        image = ax.imshow(grid, cmap=cmap, aspect="equal")
+        ax.set_title(metric, fontsize=10)
+        ax.set_xticks(range(len(gammas)), [f"{g:g}" for g in gammas])
+        ax.set_yticks(range(len(delta_P)))
+        ax.tick_params(axis="both", labelsize=8, length=2, pad=2)
+        if i % 2 == 0:
+            ax.set_yticklabels([f"{p:g}" for p in delta_P])
+            ax.set_ylabel(r"$\Delta_P$", fontsize=9)
+        else:
+            ax.set_yticklabels([])
+        if i >= 2:
+            ax.set_xlabel(r"$\gamma$", fontsize=9)
+        fig.colorbar(image, ax=ax, fraction=0.047, pad=0.025).ax.tick_params(labelsize=7)
+
+    fig.savefig(out_dir + f"heatmaps_ratio_{ratio}.png", dpi=300)
+    plt.close(fig)
+
+def sensitive_analysis(delta_P, P_Q_Ratio, gammas, metrics, out_dir):
+    """Summarize per-path grid-search results and plot one figure per ratio.
+
+        Loads a NumPy file for each combination of fine-grid step, grid ratio,
+        and gamma. Each file contains one row per simulated path and columns in
+        the same order as "metrics". Non-finite values are excluded separately
+        for each metric. Saves a CSV of means, sample SDs, and valid counts, then
+        prints the configuration with the highest mean directional accuracy.
+
+        :param delta_P:     Fine-grid steps used in the grid search.
+        :param P_Q_Ratio:   Coarse-to-fine grid ratios used in the grid search.
+        :param gammas:      Jump-threshold constants used in the grid search.
+        :param metrics:     Ordered names of the metric columns in each NumPy file; include "DirAcc", "RMSE", "TPR", and "FPR".
+                            Pass four metrics when using the 2-by-2 heatmap function.
+        :param out_dir:     Directory containing the input ".npy" files and where the CSV and PNG figures will be saved.
+        :return:            None. Writes the summary CSV and heatmap figures; prints the highest-mean-DirAcc configuration.
+    """
+    rows = []
+    for p in delta_P:
+        for ratio in P_Q_Ratio:
+            for gamma in gammas:
+                filename = f"metrics_per_path_P_{p:.4f}_ratio_{ratio}_gamma_{gamma}.npy"
+                data = np.load(out_dir + filename)
+                row = {"P": p, "ratio": ratio, "gamma": gamma, "filename": filename,
+                       "n_paths": data.shape[0]}
+                for col, metric in enumerate(metrics):
+                    values = np.asarray(data[:, col], dtype=float)
+                    values = values[np.isfinite(values)]
+                    if len(values) > 1:
+                        mean, sd, n = values.mean(), values.std(ddof=1), len(values)
+                    elif len(values) == 1:
+                        mean, sd, n = values[0], np.nan, 1
+                    else:
+                        mean, sd, n = np.nan, np.nan, 0
+                    row.update({f"{metric}_mean": mean, f"{metric}_sd": sd, f"{metric}_n": n})
+                rows.append(row)
+
+    summary = pd.DataFrame(rows)
+    summary.to_csv(out_dir + "all_configurations.csv", index=False)
+    for ratio in P_Q_Ratio:
+        draw_ratio_heatmaps(summary, ratio, out_dir, delta_P, gammas, metrics)
+
+    cols = ["P", "ratio", "gamma", "DirAcc_mean", "DirAcc_sd", "RMSE_mean", "RMSE_sd", "TPR_mean", "FPR_mean"]
+    print("Best directional accuracy among eligible settings:")
+    print(summary.sort_values("DirAcc_mean", ascending=False)[cols].head(1).to_string(index=False))
+
 def model_pred_single(args):
     """
     Evaluate all forecasting models on a single simulated path.
@@ -1760,13 +1840,13 @@ def model_pred_single(args):
     RMSE, directional accuracy, and computation time for each.
 
     :param args: Tuple (index_, sim_Y, sim_test, adj_sim, forecast_step, P_Q_ratio, gamma) where:
-                   - index_ (int):         Sample index in the output arrays
-                   - sim_Y (np.ndarray):   Training data, shape (K, T_train)
-                   - sim_test (np.ndarray):Test data, shape (K, T_test)
-                   - adj_sim:              Line graph adjacency structure for grOU/GNAR
-                   - forecast_step (int):  Number of steps ahead to forecast
-                   - P_Q_ratio (int):      Ratio of fine-grid to coarse-grid step sizes
-                   - gamma (float):        Critical region hyperparameter
+                   - index_ (int):          Sample index in the output arrays
+                   - sim_Y (np.ndarray):    Training data, shape (K, T_train)
+                   - sim_test (np.ndarray): Test data, shape (K, T_test)
+                   - adj_sim:               Line graph adjacency structure for grOU/GNAR
+                   - forecast_step (int):   Number of steps ahead to forecast
+                   - P_Q_ratio (int):       Ratio of fine-grid to coarse-grid step sizes
+                   - gamma (float):         Critical region hyperparameter
     :return:    Tuple (index_, RMSE_row, direction_row, comp_row) where:
                   - RMSE_row (np.ndarray):      RMSE for 7 models (6 + NA), shape (7, )
                   - direction_row (np.ndarray): DirAcc for 6 models, shape (6, )
