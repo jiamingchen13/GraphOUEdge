@@ -124,7 +124,7 @@ class GraphOUEdge:
     Q_Q : np.ndarray
         MCAR companion matrix, shape (LK, LK). Populated by Q_matrix().
     b : np.ndarray
-        Lévy drift parameter (no-truncation convention), shape (K,).
+        Lévy drift parameter (no-truncation convention), shape (K, ).
     Sigma : np.ndarray
         Brownian covariance matrix of the Lévy process, shape (K, K).
     jump_F : scipy distribution
@@ -135,11 +135,9 @@ class GraphOUEdge:
         Total simulation time horizon.
     N : int
         Number of fine-grid time steps (= T^7, satisfying the mesh condition Δ_P = T^{-6}).
-    data_dir : str
-        Directory for saving/loading simulation data.
     """
 
-    def __init__(self, R_L: List, K: int, C: int, Adj: np.ndarray, W_C: List, gamma: float, data_dir: str, scale: float = 1, T: int = 8):
+    def __init__(self, R_L: List, K: int, C: int, Adj: np.ndarray, W_C: List, gamma: float, scale: float = 1, T: int = 8):
         """
         Initialize the GraphOUEdge model with network structure and default parameters.
 
@@ -156,7 +154,6 @@ class GraphOUEdge:
         :param Adj:      Adjacency matrices for each neighborhood stage, np.ndarray
         :param W_C:      Edge-weight matrices for each covariate, List[np.ndarray]
         :param gamma:    Critical region hyperparameter for jump filtering (must be > 1), float
-        :param data_dir: Directory path for saving/loading simulation outputs, str
         :param scale:    Scale parameter for the default Gaussian jump distribution, float
         :param T:        Total simulation time horizon (also controls grid resolution), int
         """
@@ -212,9 +209,6 @@ class GraphOUEdge:
         # Fine-grid size: N = T^7 steps → mesh Δ_P = T/N = T^{-6}
         # This satisfies the asymptotic condition Δ_P = o(t^{-1} Δ_Q^2) from Appendix C
         self.N = self.T ** 7 # Number of partitions
-
-        # Output directory for saving simulation results
-        self.data_dir = data_dir
 
     # ============================================================
     # PARAMETER SETTERS
@@ -326,8 +320,8 @@ class GraphOUEdge:
                        - sample_idx (int): Index of this sample in the output array
                        - rate (float):     Poisson jump rate (used for 'CP' regime only)
                        - seed (int):       Random seed for this replicate
-        :return: Tuple (sample_idx, path) where path is (K, N+1) np.ndarray,
-                 or None if an invalid regime is specified.
+        :return: Tuple (sample_idx, path, jump_times) where path is (K, N+1) np.ndarray, jump_times is a np.array of
+                 timestamp of jumps in [0, T] or None if an invalid regime is specified.
         """
         regime, sample_idx, rate, seed = args
 
@@ -356,7 +350,7 @@ class GraphOUEdge:
             x0 = simulate_MCAR_stat_distr_approx(self.Q_Q, self.b, self.Sigma, self.jumps)
             # Simulate path using Euler-Maruyama approximation
             path = simulate_MCAR_approx(np.linspace(0, self.T, self.N + 1), self.Q_Q, x0, self.b, self.Sigma, self.jumps, uniform=True)
-            jump_times = np.array([])
+            jump_times = np.array([]) # Record empty for infinitely many small jumps
 
         else:
             print("Regime must be 'BM', 'CP' or 'Gamma'.")
@@ -389,9 +383,10 @@ class GraphOUEdge:
         :param seed:      Base random seed; worker i uses seed + i for reproducibility, int
         :param rate:      Poisson jump arrival rate (used only for 'CP' regime), float
         :param n_jobs:    Number of parallel worker processes; defaults to cpu_count(), int
-        :param show_jump: If True, output jump time
+        :param show_jump: If True, output jump timestamps in [0, T], np.array
         :return MCAR:     Simulated paths array, shape (n_samples, K, N+1) np.ndarray,
                           where MCAR[i, :, :] is the i-th simulated path of Y_t ∈ R^K.
+                          Return all timestamp arrays of jumps in [0, T] if show_jump is True.
                           Returns None if Q_matrix() has not been called.
         """
         # Guard: ensure companion matrix has been constructed before simulation

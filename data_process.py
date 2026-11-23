@@ -969,7 +969,7 @@ def OU_edge_model(Y, test_set, test_size, forecast_step, R_L, C, P_, Q_, gamma, 
     # No network structure for OU: use zero adjacency matrices
     Adj_L_OU = np.array([np.zeros((K, K)) for _ in range(max(R_L))])
     W_C_OU = edge_weight(Adj_L_OU)
-    X_OU = GraphOUEdge(R_L, K, C, Adj_L_OU, W_C_OU, gamma, 'data\\LOBSTERdata\\output\\train\\aggregate')
+    X_OU = GraphOUEdge(R_L, K, C, Adj_L_OU, W_C_OU, gamma)
 
     # Estimate Lévy triplet (b, Σ) using full iterative procedure
     _, (b_OU, Sigma_OU) = estimate_MCAR('OU', Y, P_, Q_, Adj_L_OU, W_C_OU, R_L, C, gamma, is_global=is_global)
@@ -1146,7 +1146,7 @@ def grOU_edge_model(Y, Adj, test_set, test_size, forecast_step, R_L, C, P_, Q_, 
     W_C = edge_weight(Adj_L)
 
     # Initialize GraphOUEdge model structure
-    X = GraphOUEdge(R_L, K, C, Adj_L, W_C, gamma, 'data\\LOBSTERdata\\output\\train\\aggregate')
+    X = GraphOUEdge(R_L, K, C, Adj_L, W_C, gamma)
 
     # Estimate Lévy triplet (b, Σ) using full iterative procedure
     QQ_hat_full, (b, Sigma) = estimate_MCAR('grOU', Y, P_, Q_, Adj_L, W_C, R_L, C, gamma, is_global=is_global)
