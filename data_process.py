@@ -969,7 +969,7 @@ def OU_edge_model(Y, test_set, test_size, forecast_step, R_L, C, P_, Q_, gamma, 
     # No network structure for OU: use zero adjacency matrices
     Adj_L_OU = np.array([np.zeros((K, K)) for _ in range(max(R_L))])
     W_C_OU = edge_weight(Adj_L_OU)
-    X_OU = GraphOUEdge(R_L, K, C, Adj_L_OU, W_C_OU, gamma)
+    X_OU = GraphOUEdge(R_L, K, C, Adj_L_OU, W_C_OU)
 
     # Estimate Lévy triplet (b, Σ) using full iterative procedure
     _, (b_OU, Sigma_OU) = estimate_MCAR('OU', Y, P_, Q_, Adj_L_OU, W_C_OU, R_L, C, gamma, is_global=is_global)
@@ -1146,7 +1146,7 @@ def grOU_edge_model(Y, Adj, test_set, test_size, forecast_step, R_L, C, P_, Q_, 
     W_C = edge_weight(Adj_L)
 
     # Initialize GraphOUEdge model structure
-    X = GraphOUEdge(R_L, K, C, Adj_L, W_C, gamma)
+    X = GraphOUEdge(R_L, K, C, Adj_L, W_C)
 
     # Estimate Lévy triplet (b, Σ) using full iterative procedure
     QQ_hat_full, (b, Sigma) = estimate_MCAR('grOU', Y, P_, Q_, Adj_L, W_C, R_L, C, gamma, is_global=is_global)
@@ -1886,7 +1886,7 @@ def model_pred(data, test_size, adj_sim, forecast_step, P_Q_ratio, gamma, label,
     with open('./data/LOBSTERdata/output/sim/' + scenario + '/time_' + label + '.npy', 'wb') as f:
         np.save(f, comp_time)
 
-def boxplot_(sim, scenario):
+def boxplot_(sim, scenario, max_y_lim = 6):
     """
     Generate half-violin boxplots for RMSE, directional accuracy, and computation time.
 
@@ -1902,13 +1902,14 @@ def boxplot_(sim, scenario):
       2. Normalizing the density to a maximum width of 0.25 (in plot units)
       3. Plotting the density to the right of each box
 
-    :param sim:      Simulated paths array, shape (n_samples, K, T_total) np.ndarray
-                     (used only for plotting a representative sample path)
-    :param scenario: Simulation scenario name (used for output directory and file names), str
-    :return:         None. Saves .eps figures to the scenario output directory.
+    :param sim:         Simulated paths array, shape (n_samples, K, T_total) np.ndarray
+                        (used only for plotting a representative sample path)
+    :param scenario:    Simulation scenario name (used for output directory and file names), str
+    :param max_y_lim:   Maximum y-axis value (in plot), int
+    :return:            None. Saves .eps figures to the scenario output directory.
     """
     # ---- Plot a representative sample path ----
-    plt.ylim([-6, 6])
+    plt.ylim([-max_y_lim, max_y_lim])
     plt.plot(sim[0, :, :].T)
     plt.tick_params(axis='both', labelsize=20)
     plt.savefig('./data/LOBSTERdata/output/sim/' + scenario + '/sample_path.eps', bbox_inches='tight', format='eps')

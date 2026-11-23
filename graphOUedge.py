@@ -60,8 +60,7 @@ Each worker uses a deterministic seed (base_seed + sample_idx) for reproducibili
 --------------------------------------------------------------------------------
 Usage Example:
 --------------------------------------------------------------------------------
-    model = GraphOUEdge(R_L=[1], K=2, C=1, Adj=[A], W_C=[W], gamma=1.5,
-                        data_dir='./data', scale=1.0, T=8)
+    model = GraphOUEdge(R_L=[1], K=2, C=1, Adj=[A], W_C=[W], scale=1.0, T=8)
     model.alpha_set(np.array([[4.0, 3.0]]))
     model.beta_set([[1.0]])
     model.Q_matrix(strict=True)
@@ -109,8 +108,6 @@ class GraphOUEdge:
         Adjacency matrices for each neighborhood stage, shape (max_stage, K, K).
     W_C : List[np.ndarray]
         Edge-weight matrices for each covariate, each of shape (K, K).
-    gamma : float
-        Hyperparameter for the jump-filtering critical region (must be > 1).
     alpha : np.ndarray
         Standard autoregressive coefficients, shape (L, K).
         alpha[l, e] = α_{e,l} is the self-autoregressive coefficient for edge e at lag l.
@@ -137,7 +134,7 @@ class GraphOUEdge:
         Number of fine-grid time steps (= T^7, satisfying the mesh condition Δ_P = T^{-6}).
     """
 
-    def __init__(self, R_L: List, K: int, C: int, Adj: np.ndarray, W_C: List, gamma: float, scale: float = 1, T: int = 8):
+    def __init__(self, R_L: List, K: int, C: int, Adj: np.ndarray, W_C: List, scale: float = 1, T: int = 8):
         """
         Initialize the GraphOUEdge model with network structure and default parameters.
 
@@ -153,7 +150,6 @@ class GraphOUEdge:
         :param C:        Number of edge-weight covariate matrices, int
         :param Adj:      Adjacency matrices for each neighborhood stage, np.ndarray
         :param W_C:      Edge-weight matrices for each covariate, List[np.ndarray]
-        :param gamma:    Critical region hyperparameter for jump filtering (must be > 1), float
         :param scale:    Scale parameter for the default Gaussian jump distribution, float
         :param T:        Total simulation time horizon (also controls grid resolution), int
         """
@@ -169,9 +165,6 @@ class GraphOUEdge:
         # ---- Network graph structure ----
         self.Adj = Adj      # Adjacency matrices: Adj[r] is the r-stage adjacency matrix
         self.W_C = W_C      # Edge-weight matrices: W_C[c] is the c-th covariate weight
-
-        # ---- Jump filtering hyperparameter ----
-        self.gamma = gamma  # Critical region parameter γ > 1 (Theorem 3.2)
 
         # ---- Model parameters (initialized to zero/default) ----
         # alpha[l, e]: autoregressive coefficient for edge e at lag l
